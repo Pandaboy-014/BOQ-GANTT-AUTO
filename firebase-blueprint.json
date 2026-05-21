@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "role": { "type": "string", "enum": ["manager", "engineer"] },
+        "assignedProjects": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "role", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Construction project information.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "contractor": { "type": "string" },
+        "contractId": { "type": "string" },
+        "budget": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "duration": { "type": "string" },
+        "location": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "memberIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name", "contractor", "ownerId"]
+    },
+    "BOQTask": {
+      "title": "BOQ Task",
+      "description": "Bill of Quantities task for a project.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "category": { "type": "string" },
+        "name": { "type": "string" },
+        "qty": { "type": "number" },
+        "unit": { "type": "string" },
+        "unitPrice": { "type": "number" },
+        "factor": { "type": "number" },
+        "weightPercent": { "type": "number" },
+        "dailyProgress": { "type": "object" },
+        "dailyActual": { "type": "object" }
+      },
+      "required": ["projectId", "name"]
+    },
+    "Category": {
+      "title": "Category Metadata",
+      "description": "Metadata for a project category (Main Header).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "name": { "type": "string" },
+        "unit": { "type": "string" },
+        "qty": { "type": "number" },
+        "unitPrice": { "type": "number" },
+        "weightPercent": { "type": "number" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "projectId", "name"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile data."
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Project data."
+    },
+    "/projects/{projectId}/tasks/{taskId}": {
+      "schema": "BOQTask",
+      "description": "Tasks within a project."
+    },
+    "/projects/{projectId}/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Category metadata within a project."
+    }
+  }
+}

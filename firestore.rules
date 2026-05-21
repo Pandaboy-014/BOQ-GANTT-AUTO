@@ -1,0 +1,114 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User profile validation
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'email', 'role', 'createdAt']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 100 &&
+             data.role in ['manager', 'engineer'] &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() <= 20)) &&
+             (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000000)) &&
+             data.createdAt is string;
+    }
+
+    // Project validation
+    function isValidProject(data) {
+      return data.keys().hasAll(['name', 'contractor', 'ownerId']) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.contractor is string && data.contractor.size() <= 200 &&
+             data.ownerId is string &&
+             (!('budget' in data) || data.budget is string) &&
+             (!('startDate' in data) || data.startDate is string) &&
+             (!('endDate' in data) || data.endDate is string) &&
+             (!('memberIds' in data) || data.memberIds is list);
+    }
+
+    function canAccessProject(projectData) {
+      return isSignedIn() && (
+        projectData.ownerId == request.auth.uid || 
+        ('memberIds' in projectData && request.auth.uid in projectData.memberIds)
+      );
+    }
+
+    // --- Matches ---
+
+    match /users/{userId} {
+      allow list, get: if isSignedIn(); // Allow searching users
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role;
+    }
+
+    match /projects/{projectId} {
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || ( 'memberIds' in resource.data && request.auth.uid in resource.data.memberIds));
+      allow get: if canAccessProject(resource.data);
+      allow create: if isSignedIn() && isValidProject(request.resource.data) && request.resource.data.ownerId == request.auth.uid;
+      allow update: if canAccessProject(resource.data) && isValidProject(request.resource.data) && (resource.data.ownerId == request.auth.uid || request.resource.data.ownerId == resource.data.ownerId);
+      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      match /tasks/{taskId} {
+        allow list: if isValidId(projectId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data);
+        allow get: if isValidId(projectId) && isValidId(taskId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data);
+        allow create: if isValidId(projectId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data) && isValidTask(request.resource.data);
+        allow update: if isValidId(projectId) && isValidId(taskId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data) && isValidTask(request.resource.data);
+        allow delete: if isValidId(projectId) && isValidId(taskId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data);
+      }
+
+      match /categories/{categoryId} {
+        allow list: if isValidId(projectId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data);
+        allow get: if isValidId(projectId) && isValidId(categoryId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data);
+        allow create: if isValidId(projectId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data) && isValidCategory(request.resource.data);
+        allow update: if isValidId(projectId) && isValidId(categoryId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data) && isValidCategory(request.resource.data);
+        allow delete: if isValidId(projectId) && isValidId(categoryId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data);
+      }
+    }
+
+    // Task inner validation
+    function isValidTask(data) {
+      return data.keys().hasAll(['projectId', 'name', 'category']) &&
+             data.projectId is string &&
+             data.name is string && data.name.size() <= 300 &&
+             data.category is string &&
+             (!('qty' in data) || data.qty is number) &&
+             (!('unitPrice' in data) || data.unitPrice is number) &&
+             (!('unit' in data) || data.unit is string) &&
+             (!('weightPercent' in data) || data.weightPercent is number) &&
+             (!('order' in data) || data.order is number) &&
+             (!('weeklyProgress' in data) || data.weeklyProgress is map) &&
+             (!('weeklyActual' in data) || data.weeklyActual is map) &&
+             (!('dailyProgress' in data) || data.dailyProgress is map) &&
+             (!('dailyActual' in data) || data.dailyActual is map);
+    }
+
+    // Category inner validation
+    function isValidCategory(data) {
+      return data.keys().hasAll(['id', 'projectId', 'name']) &&
+             data.id is string &&
+             data.projectId is string &&
+             data.name is string && data.name.size() <= 300 &&
+             (!('qty' in data) || data.qty is number) &&
+             (!('unit' in data) || data.unit is string) &&
+             (!('unitPrice' in data) || data.unitPrice is number) &&
+             (!('weightPercent' in data) || data.weightPercent is number) &&
+             (!('order' in data) || data.order is number);
+    }
+  }
+}
