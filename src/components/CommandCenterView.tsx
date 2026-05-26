@@ -15,6 +15,7 @@ import {
   Cpu
 } from 'lucide-react';
 import { ProjectInfo } from '../types.ts';
+import Logo from './Logo.tsx';
 
 interface CommandCenterViewProps {
   project: ProjectInfo;
@@ -26,7 +27,32 @@ interface CommandCenterViewProps {
   };
 }
 
-export default function CommandCenterView({ project, onBack, externalData }: CommandCenterViewProps) {
+export default function CommandCenterView({ project: propProject, onBack, externalData }: CommandCenterViewProps) {
+  const lastProjectRef = React.useRef<ProjectInfo | null>(null);
+  if (propProject) {
+    lastProjectRef.current = propProject;
+  }
+  const project = propProject || lastProjectRef.current || {
+    id: '',
+    name: 'กำลังโหลด...',
+    contractor: '',
+    contractId: '',
+    budget: '0',
+    startDate: '-',
+    endDate: '-',
+    durationDays: 0,
+    extension: 0,
+    location: '',
+    allowOverBudget: false,
+    ownerId: '',
+    memberIds: [],
+    progress: 0,
+    imageUrl: '',
+    apiUrl: '',
+    editUrl: '',
+    sheetId: ''
+  };
+
   const [selectedMonth, setSelectedMonth] = useState('DEC-2068');
   
   const budget = externalData.budget || Number(project.budget) || 20000000;
@@ -94,32 +120,31 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
           </button>
           
           <div className="flex items-center gap-6">
-            <div className="w-14 h-14 bg-cyan-500/15 rounded-2xl flex items-center justify-center border border-cyan-500/40 shadow-[0_0_30px_rgba(6,182,212,0.4)] backdrop-blur-3xl">
-              <Cpu className="w-8 h-8 text-cyan-400" />
-            </div>
+            <Logo className="text-cyan-400 max-w-full h-[45px] md:h-[65px]" />
+            <div className="h-8 w-px bg-white/10 hidden sm:block" />
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-semibold tracking-tight text-white uppercase italic leading-none">
-                  B IDEA <span className="text-cyan-400">CONTROL</span>
+                <h1 className="text-xl font-semibold tracking-tight text-white uppercase italic leading-none">
+                  <span className="text-cyan-400">CONTROL</span> CENTER
                 </h1>
                 <span className="text-[9px] bg-cyan-500/20 text-cyan-500 px-2.5 py-1 rounded-full border border-cyan-500/30 font-semibold tracking-widest leading-none">V4.1</span>
               </div>
-              <p className="text-[11px] text-slate-200 font-bold uppercase tracking-[0.2em] mt-1.5 opacity-90 leading-none">ศูนย์ควบคุมวิศวกรรมอัจฉริยะ</p>
+              <p className="text-[11px] text-slate-200 font-normal uppercase tracking-[0.2em] mt-1.5 opacity-90 leading-none">ศูนย์ควบคุมวิศวกรรมอัจฉริยะ</p>
             </div>
           </div>
         </div>
 
         <div className="flex gap-12">
           <div className="text-right">
-            <p className="text-[11px] font-bold text-cyan-400 uppercase tracking-widest mb-1.5 opacity-90">งบประมาณงานโครงการ</p>
-            <p className="text-2xl font-bold text-white tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]">
+            <p className="text-[11px] font-normal text-cyan-400 uppercase tracking-widest mb-1.5 opacity-90">งบประมาณงานโครงการ</p>
+            <p className="text-2xl font-normal text-white tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]">
               ฿{budget.toLocaleString(undefined, { minimumFractionDigits: 0 })}
             </p>
           </div>
           <div className="h-14 w-px bg-white/10" />
           <div className="text-right">
-            <p className="text-[11px] font-bold text-slate-200 uppercase tracking-widest mb-1.5 opacity-90">ผู้รับจ้าง</p>
-            <p className="text-lg font-bold text-white tracking-tight">{project.contractor || 'B IDEA CONSTRUCTION'}</p>
+            <p className="text-[11px] font-normal text-slate-200 uppercase tracking-widest mb-1.5 opacity-90">ผู้รับจ้าง</p>
+            <p className="text-lg font-normal text-white tracking-tight">{project.contractor || 'B IDEA CONSTRUCTION'}</p>
           </div>
         </div>
       </header>
@@ -143,14 +168,14 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
             
             <div className="space-y-8">
               <div className="group/item">
-                <p className="text-[11px] text-slate-200 font-bold uppercase mb-2 tracking-widest group-hover/item:text-cyan-400 transition-colors">ยอดเงินรวมจ่ายจริง (Actual Payment)</p>
-                <p className="text-2xl font-bold text-white tracking-tight">฿{cumActual.toLocaleString()}</p>
+                <p className="text-[11px] text-slate-200 font-normal uppercase mb-2 tracking-widest group-hover/item:text-cyan-400 transition-colors">ยอดเงินรวมจ่ายจริง (Actual Payment)</p>
+                <p className="text-2xl font-normal text-white tracking-tight">฿{cumActual.toLocaleString()}</p>
               </div>
               <div className="pt-6 border-t border-white/5 group/item">
-                <p className="text-[11px] text-slate-200 font-bold uppercase mb-2 tracking-widest group-hover/item:text-cyan-400 transition-colors">ยอดเงินตามแผนงาน (Planned Payment)</p>
+                <p className="text-[11px] text-slate-200 font-normal uppercase mb-2 tracking-widest group-hover/item:text-cyan-400 transition-colors">ยอดเงินตามแผนงาน (Planned Payment)</p>
                 <div className="flex items-end justify-between">
-                  <p className="text-lg font-bold text-slate-100">฿{cumPlan.toLocaleString()}</p>
-                  <div className="px-2.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-bold rounded-full border border-emerald-500/20">
+                  <p className="text-lg font-normal text-slate-100">฿{cumPlan.toLocaleString()}</p>
+                  <div className="px-2.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[10px] font-normal rounded-full border border-emerald-500/20">
                     STABLE
                   </div>
                 </div>
@@ -165,12 +190,12 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
                 <Layers className="w-4 h-4 text-indigo-400" />
                 ความคืบหน้าโครงการรายงวด
               </h3>
-              <span className="text-[10px] font-bold text-slate-200 uppercase tracking-widest">Live Stream</span>
+              <span className="text-[10px] font-normal text-slate-200 uppercase tracking-widest">Live Stream</span>
             </div>
             <div className="space-y-8 overflow-y-auto pr-2 custom-scrollbar flex-1">
               {tasks.map((task, i) => (
                 <div key={i} className="space-y-4 group">
-                  <div className="flex items-center justify-between gap-6 w-full text-[10px] font-semibold uppercase tracking-wider">
+                  <div className="flex items-center justify-between gap-6 w-full text-[10px] font-normal uppercase tracking-wider">
                     <span className="text-slate-400 group-hover:text-white transition-colors truncate max-w-[60%]">{task.name}</span>
                     <span 
                       style={{ color: task.status === 'Jade Green' ? '#10b981' : task.status === 'Amber Yellow' ? '#f59e0b' : '#ef4444' }} 
@@ -238,17 +263,17 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
 
             {/* Central Status Node - Optimized Size */}
             <div className="text-center z-10 w-48 h-48 flex flex-col items-center justify-center bg-[#020617]/50 rounded-full backdrop-blur-3xl border border-white/10 shadow-[inner_0_0_50px_rgba(6,182,212,0.15)] scale-100">
-              <div className="text-[11px] font-bold text-slate-200 uppercase tracking-[0.4em] mb-2 opacity-90 whitespace-nowrap text-center">สถานะโครงการ</div>
-              <div className={`text-lg font-bold tracking-tight text-white flex flex-col gap-0.5 whitespace-nowrap`}>
+              <div className="text-[11px] font-normal text-slate-200 uppercase tracking-[0.4em] mb-2 opacity-90 whitespace-nowrap text-center">สถานะโครงการ</div>
+              <div className={`text-lg font-normal tracking-tight text-white flex flex-col gap-0.5 whitespace-nowrap`}>
                 <span>{variance >= 0 ? 'ปกติ (NOMINAL)' : 'ล่าช้า (DEGRADED)'}</span>
-                <span className={`text-[10px] font-bold py-1 px-3 rounded-full mx-auto whitespace-nowrap mt-2 ${variance >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                <span className={`text-[10px] font-normal py-1 px-3 rounded-full mx-auto whitespace-nowrap mt-2 ${variance >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
                   {variance >= 0 ? 'เป็นไปตามเป้าหมาย' : 'ต้องการการตรวจสอบ'}
                 </span>
               </div>
               
               <div className="mt-4 flex flex-col items-center gap-0.5">
-                 <span className="text-[9px] font-bold text-slate-200 uppercase tracking-[0.3em]">Variance</span>
-                 <span className={`text-sm font-bold ${variance >= 0 ? 'text-white' : 'text-rose-400'}`}>
+                 <span className="text-[9px] font-normal text-slate-200 uppercase tracking-[0.3em]">Variance</span>
+                 <span className={`text-sm font-normal ${variance >= 0 ? 'text-white' : 'text-rose-400'}`}>
                    {variance >= 0 ? '+' : ''}{variance.toFixed(2)}%
                  </span>
               </div>
@@ -259,24 +284,24 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
                <div className="text-right">
                   <div className="flex items-center gap-2 justify-end mb-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.5)]" />
-                    <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest whitespace-nowrap">ผลงานรวมทั้งหมด (Actual)</p>
+                    <p className="text-[8px] font-normal text-slate-300 uppercase tracking-widest whitespace-nowrap">ผลงานรวมทั้งหมด (Actual)</p>
                   </div>
-                  <p className="text-lg font-bold text-white">{actualProgress.toFixed(2)}%</p>
+                  <p className="text-lg font-normal text-white">{actualProgress.toFixed(2)}%</p>
                </div>
                <div className="w-12 h-px bg-white/10" />
                <div className="text-right">
                   <div className="flex items-center gap-2 justify-end mb-1">
                     <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
-                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">แผนงานรวมทั้งหมด (Plan)</p>
+                    <p className="text-[8px] font-normal text-slate-400 uppercase tracking-widest whitespace-nowrap">แผนงานรวมทั้งหมด (Plan)</p>
                   </div>
-                  <p className="text-sm font-semibold text-cyan-400">{planProgress.toFixed(2)}%</p>
+                  <p className="text-sm font-normal text-cyan-400">{planProgress.toFixed(2)}%</p>
                </div>
             </div>
 
             <div className="absolute -bottom-4 -left-12 flex flex-col items-start transform p-5 bg-slate-900/60 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-20">
                <div className="space-y-1">
-                  <p className="text-[8px] font-medium text-slate-300 uppercase tracking-widest whitespace-nowrap">Overall Index</p>
-                  <p className="text-2xl font-bold text-white tracking-tighter drop-shadow-[0_0_20px_rgba(255,255,255,0.3)]">
+                  <p className="text-[8px] font-normal text-slate-300 uppercase tracking-widest whitespace-nowrap">Overall Index</p>
+                  <p className="text-2xl font-normal text-white tracking-tighter drop-shadow-[0_0_20px_rgba(255,255,255,0.3)]">
                     {actualProgress.toFixed(0)}<span className="text-base opacity-40">%</span>
                   </p>
                </div>
@@ -285,14 +310,14 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
 
           <div className="mt-16 grid grid-cols-2 gap-10 w-full max-w-2xl">
              <div className="p-6 bg-white/5 border border-white/5 rounded-3xl backdrop-blur-md">
-                <p className="text-xs font-bold text-slate-200 uppercase tracking-widest mb-3">Structural Index</p>
+                <p className="text-xs font-normal text-slate-200 uppercase tracking-widest mb-3">Structural Index</p>
                 <div className="h-1 w-full bg-white shadow-[0_0_15px_rgba(255,255,255,0.5)] rounded-full" />
-                <p className="text-sm font-bold text-white mt-4 uppercase">Overall Structural Assembly</p>
+                <p className="text-sm font-normal text-white mt-4 uppercase">Overall Structural Assembly</p>
              </div>
              <div className="p-6 bg-white/5 border border-white/5 rounded-3xl backdrop-blur-md">
-                <p className="text-xs font-bold text-slate-200 uppercase tracking-widest mb-3">Capital Metrics</p>
+                <p className="text-xs font-normal text-slate-200 uppercase tracking-widest mb-3">Capital Metrics</p>
                 <div className="h-1 w-full bg-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.5)] rounded-full" />
-                <p className="text-sm font-bold text-white mt-4 uppercase">Financial Liquidity Flow</p>
+                <p className="text-sm font-normal text-white mt-4 uppercase">Financial Liquidity Flow</p>
              </div>
           </div>
         </div>
@@ -311,7 +336,7 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
               <div className="flex items-end gap-4 h-5/6">
                 {monthData.map((d, i) => (
                   <div key={i} className="flex-1 flex flex-col items-center group relative">
-                    <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all pointer-events-none bg-slate-900 border border-white/10 px-2 py-1 rounded text-[10px] font-bold text-white z-20">
+                    <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all pointer-events-none bg-slate-900 border border-white/10 px-2 py-1 rounded text-[10px] font-normal text-white z-20">
                       ฿{d.value.toLocaleString()}
                     </div>
                     <motion.div 
@@ -324,13 +349,13 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
                         background: `linear-gradient(to top, ${d.color}, ${d.color}cc)`
                       }}
                     />
-                    <span className="text-[10px] font-bold text-slate-500 mt-4 uppercase tracking-wider">{d.label === 'PLAN' ? 'แผนงาน' : 'ผลงานจริง'}</span>
+                    <span className="text-[10px] font-normal text-slate-500 mt-4 uppercase tracking-wider">{d.label === 'PLAN' ? 'แผนงาน' : 'ผลงานจริง'}</span>
                   </div>
                 ))}
               </div>
             </div>
             <div className="flex flex-col gap-2 pt-6 border-t border-white/5">
-              <div className="flex justify-between text-[10px] font-bold text-slate-500 uppercase">
+              <div className="flex justify-between text-[10px] font-normal text-slate-500 uppercase">
                 <span>งบประมาณจำกัดรายเดือน</span>
                 <span className="text-white">฿50,000.00</span>
               </div>
@@ -365,7 +390,7 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
       <footer className="relative z-10 mt-10 pt-10 border-t border-white/10 max-w-full w-full mx-auto px-8 lg:px-12">
         <div className="grid grid-cols-12 gap-12 items-center">
           <div className="col-span-3">
-            <div className="flex items-center gap-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+            <div className="flex items-center gap-5 text-xs font-normal text-slate-500 uppercase tracking-widest">
               <Monitor className="w-5 h-5 text-cyan-400" />
               <span>Core Kernel: CivilScan Pro</span>
               <span className="text-emerald-500 flex items-center gap-2">
@@ -396,12 +421,12 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
             <div className="flex justify-between text-[9px] font-medium text-slate-500 uppercase tracking-widest">
               <div className="flex gap-6">
                 <span>วันที่เริ่มสัญญา: {project.startDate}</span>
-                <span className="text-slate-400 font-semibold tracking-normal px-2 bg-white/5 rounded">ผ่านไปแล้ว: 185 วัน</span>
+                <span className="text-slate-400 font-normal tracking-normal px-2 bg-white/5 rounded">ผ่านไปแล้ว: 185 วัน</span>
               </div>
               <div className="flex gap-4">
                 <span className="text-rose-500/70 italic">ล่าช้า: -180 วัน</span>
                 <span className="text-white/20">|</span>
-                <span className="text-white font-semibold">ความสำเร็จ: {Math.floor(50.6)}%</span>
+                <span className="text-white font-normal">ความสำเร็จ: {Math.floor(50.6)}%</span>
               </div>
             </div>
           </div>
@@ -417,7 +442,7 @@ export default function CommandCenterView({ project, onBack, externalData }: Com
                   <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center border border-white/5 group-hover:border-cyan-500/50 group-hover:bg-cyan-500/5 transition-all">
                     <item.icon className="w-5 h-5 text-slate-500 group-hover:text-cyan-400 transition-colors" />
                   </div>
-                  <span className="text-[9px] font-bold text-slate-600 uppercase mt-2 group-hover:text-slate-400 transition-colors tracking-tight">{item.label}</span>
+                  <span className="text-[9px] font-normal text-slate-600 uppercase mt-2 group-hover:text-slate-400 transition-colors tracking-tight">{item.label}</span>
                </div>
              ))}
           </div>

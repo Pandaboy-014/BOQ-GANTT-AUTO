@@ -6,11 +6,31 @@
   --color-indigo-950: #0a192f;
   --color-indigo-900: #112240;
   --color-brand-blue: #2a36b1;
+  --font-weight-medium: 400;
+  --font-weight-semibold: 400;
+  --font-weight-bold: 400;
+  --font-weight-extrabold: 400;
+  --font-weight-black: 400;
 }
 
 @layer base {
   body {
     @apply bg-slate-900 text-slate-100 font-sans;
+    font-weight: 400;
+  }
+  
+  /* Ensure input fields, buttons, tables, text elements, and other details use regular weight */
+  input, select, textarea, button, p, span, div, td, th, label, tr, a, option, datalist, tfoot {
+    font-weight: 400;
+  }
+  
+  /* Selectively allow titles & actual headings to be bold as requested by user */
+  h1, h2, h3, h4, h5, h6,
+  h1 *, h2 *, h3 *, h4 *, h5 *, h6 *,
+  .app-title,
+  .page-title,
+  .section-title {
+    font-weight: 700 !important;
   }
 }
 

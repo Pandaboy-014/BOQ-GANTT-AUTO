@@ -5,6 +5,7 @@ import {
 import { Lock, Mail, Construction, BarChart3, Clock, AlertCircle, Chrome } from 'lucide-react';
 import { motion } from 'motion/react';
 import { auth } from '../lib/firebase';
+import Logo from './Logo.tsx';
 import { 
   signInWithEmailAndPassword, 
   signInWithPopup, 
@@ -107,16 +108,7 @@ export default function LoginView({ onNavigateSignup }: LoginViewProps) {
         >
           {/* Main Top Logo */}
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-indigo-600 rounded-xl shadow-2xl shadow-indigo-600/40 transform -rotate-1 relative overflow-hidden group">
-              <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-500" />
-              <Construction className="text-white w-8 h-8 relative z-10" />
-            </div>
-            <div className="space-y-0">
-              <h1 className="text-2xl font-black tracking-tight text-white uppercase leading-none">
-                B IDEA <span className="text-indigo-400">CONSTRUCTION</span>
-              </h1>
-              <p className="text-[10px] font-medium text-slate-500 uppercase tracking-[0.4em] ml-1">Engineering Excellence</p>
-            </div>
+            <Logo className="max-w-full h-[50px] md:h-[70px] text-cyan-400" />
           </div>
 
           <div className="space-y-6">
@@ -206,7 +198,8 @@ export default function LoginView({ onNavigateSignup }: LoginViewProps) {
             <Construction className="w-48 h-48 text-white" />
           </div>
 
-          <div className="text-center space-y-3 relative z-10">
+          <div className="text-center space-y-4 relative z-10 flex flex-col items-center">
+            <Logo className="max-w-full h-[95px] md:h-[120px] object-contain mb-3 text-cyan-400" />
             <h2 className="text-3xl font-light text-white uppercase tracking-tight leading-none">เข้าสู่ระบบ</h2>
             <p className="text-[10px] font-normal text-slate-500 uppercase tracking-[0.4em]">B IDEA CONSTRUCTION CO., LTD.</p>
           </div>

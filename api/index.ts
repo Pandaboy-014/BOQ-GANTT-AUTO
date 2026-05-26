@@ -8,7 +8,7 @@ app.use(express.json());
 
 // Proxy API route to avoid CORS issues with Google Apps Script
 app.get('/api/proxy', async (req: express.Request, res: express.Response) => {
-  const targetUrl = req.query.url as string;
+  let targetUrl = (req.query.url as string || '').trim();
   
   if (!targetUrl) {
     return res.status(400).json({ error: 'Missing url parameter' });
@@ -40,6 +40,19 @@ app.get('/api/proxy', async (req: express.Request, res: express.Response) => {
       const json = JSON.parse(text);
       return res.json(json);
     } catch (e) {
+      // Try to extract gviz/tq JSON padding if it's wrapped
+      try {
+        const startIdx = text.indexOf('{');
+        const endIdx = text.lastIndexOf('}');
+        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+          const cleanedText = text.substring(startIdx, endIdx + 1);
+          const json = JSON.parse(cleanedText);
+          return res.json(json);
+        }
+      } catch (innerErr) {
+        // Ignore and proceed to main error handling
+      }
+
       if (text.includes('<!DOCTYPE html>') || text.includes('<html')) {
         return res.status(422).json({ 
           error: "ได้รับข้อมูลเป็น HTML แทนที่จะเป็น JSON. โปรดตรวจสอบว่าได้เผยแพร่ Google Apps Script แบบ 'Anyone' และ URL ถูกต้อง",

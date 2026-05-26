@@ -680,7 +680,32 @@ const distributeWeight = (total: number, n: number) => {
   });
 };
 
-export default function GanttView({ project, userRole, onBack }: GanttViewProps) {
+export default function GanttView({ project: propProject, userRole, onBack }: GanttViewProps) {
+  const lastProjectRef = useRef<ProjectInfo | null>(null);
+  if (propProject) {
+    lastProjectRef.current = propProject;
+  }
+  const project = propProject || lastProjectRef.current || {
+    id: '',
+    name: 'กำลังโหลด...',
+    contractor: '',
+    contractId: '',
+    budget: '0',
+    startDate: '-',
+    endDate: '-',
+    durationDays: 0,
+    extension: 0,
+    location: '',
+    allowOverBudget: false,
+    ownerId: '',
+    memberIds: [],
+    progress: 0,
+    imageUrl: '',
+    apiUrl: '',
+    editUrl: '',
+    sheetId: ''
+  };
+
   const isReadOnly = userRole === 'manager';
   const initialTotalWeeks = useMemo(() => {
     if (project.startDate && project.endDate) {

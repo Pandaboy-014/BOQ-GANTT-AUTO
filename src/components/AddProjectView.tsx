@@ -34,6 +34,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
     imageUrl: '',
     apiUrl: '',
     editUrl: '',
+    sheetId: '',
     ownerId: '',
     memberIds: []
   };
@@ -55,6 +56,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
         apiUrl: projectToEdit.apiUrl || '',
         editUrl: projectToEdit.editUrl || '',
         location: projectToEdit.location || '',
+        sheetId: projectToEdit.sheetId || '',
       });
     }
   }, [projectToEdit]);
@@ -69,6 +71,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
       imageUrl: formData.imageUrl || '',
       apiUrl: formData.apiUrl || '',
       editUrl: formData.editUrl || '',
+      sheetId: formData.sheetId || '',
       ownerId: formData.ownerId || '',
       memberIds: formData.memberIds || []
     } as ProjectInfo;
@@ -91,7 +94,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
             <h2 className="text-4xl font-light text-white uppercase tracking-tight leading-none">
               {projectToEdit ? 'แก้ไขรายละเอียดโครงการ' : 'เพิ่มโครงการใหม่'}
             </h2>
-            <p className="text-xs font-normal text-slate-500 uppercase tracking-[0.2em] opacity-60">Project Information Architecture</p>
+            <p className="text-xs font-normal text-slate-300 uppercase tracking-[0.2em] opacity-80">Project Information Architecture</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -126,13 +129,13 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
               </div>
               <div className="space-y-0.5">
                 <h3 className="text-2xl font-light text-white uppercase tracking-tight">ข้อมูลพื้นฐานโครงการ</h3>
-                <p className="text-[10px] font-normal text-slate-600 uppercase tracking-widest leading-none">Core Project Metadata</p>
+                <p className="text-[10px] font-normal text-slate-400 uppercase tracking-widest leading-none">Core Project Metadata</p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-10 relative z-10">
               <div className="space-y-3">
-                <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">ชื่อโครงการก่อสร้าง</label>
+                <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">ชื่อโครงการก่อสร้าง</label>
                 <input 
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
@@ -141,7 +144,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
                 />
               </div>
               <div className="space-y-3">
-                <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">ชื่อผู้รับจ้าง (Contractor)</label>
+                <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">ชื่อผู้รับจ้าง (Contractor)</label>
                 <input 
                   value={formData.contractor}
                   onChange={e => setFormData({...formData, contractor: e.target.value})}
@@ -150,7 +153,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
                 />
               </div>
               <div className="space-y-3 col-span-1 md:col-span-2">
-                <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">พิกัดสถานที่ติดตั้ง</label>
+                <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">พิกัดสถานที่ติดตั้ง</label>
                 <input 
                   value={formData.location}
                   onChange={e => setFormData({...formData, location: e.target.value})}
@@ -160,7 +163,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
               </div>
               
               <div className="space-y-4 col-span-1 md:col-span-2">
-                <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">Visual Asset Identity (Image URL / Upload)</label>
+                <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">Visual Asset Identity (Image URL / Upload)</label>
                 <div className="flex gap-6 items-start">
                   <div className="flex-1 space-y-4">
                     <div className="flex gap-4">
@@ -202,9 +205,9 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
                     </div>
                     
                     <input 
-                      value={formData.imageUrl}
+                      value={formData.imageUrl || ''}
                       onChange={e => setFormData({...formData, imageUrl: e.target.value})}
-                      className="w-full bg-slate-950/50 border border-white/5 rounded-2xl p-4 text-[10px] text-slate-500 font-mono tracking-tight outline-none italic"
+                      className="w-full bg-slate-950/50 border border-white/5 rounded-2xl p-4 text-[10px] text-slate-300 font-mono tracking-tight outline-none italic"
                       placeholder="Or specify network resource path..."
                     />
                   </div>
@@ -213,8 +216,8 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
                     {formData.imageUrl ? (
                       <img src={formData.imageUrl} alt="preview" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-80" />
                     ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center text-[10px] text-slate-700 font-light text-center p-4 uppercase tracking-tighter loading-none">
-                        <ImageIcon className="w-6 h-6 mb-2 opacity-10" />
+                      <div className="w-full h-full flex flex-col items-center justify-center text-[10px] text-slate-400 font-light text-center p-4 uppercase tracking-tighter loading-none">
+                        <ImageIcon className="w-6 h-6 mb-2 opacity-50" />
                         NO ASSET
                       </div>
                     )}
@@ -223,7 +226,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
               </div>
 
               <div className="space-y-3 col-span-1 md:col-span-2">
-                <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">Real-Time Sync Protocol (Google Scripts Exec URL)</label>
+                <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">Real-Time Sync Protocol (Google Scripts Exec URL)</label>
                 <div className="relative group">
                   <Link className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400 opacity-60 group-focus-within:opacity-100 transition-opacity" />
                   <input 
@@ -236,7 +239,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
               </div>
 
               <div className="space-y-3 col-span-1 md:col-span-2">
-                <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">Source Repository Reference (Edit Access)</label>
+                <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">Source Repository Reference (Edit Access)</label>
                 <div className="relative group">
                   <Link className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400 opacity-60 group-focus-within:opacity-100 transition-opacity" />
                   <input 
@@ -247,32 +250,6 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
                   />
                 </div>
               </div>
-            </div>
-          </section>
-
-          {/* Section 2: นโยบายการเบิกจ่าย */}
-          <section className="bg-[#0a0f1a] rounded-[48px] p-12 space-y-10 border border-white/5 shadow-2xl">
-            <div className="flex items-center gap-5">
-              <div className="p-4 bg-emerald-500/5 rounded-2xl text-emerald-400 border border-emerald-500/10">
-                <ShieldCheck className="w-6 h-6 opacity-70" />
-              </div>
-              <div className="space-y-0.5">
-                <h3 className="text-2xl font-light text-white uppercase tracking-tight">Authorization Policy</h3>
-                <p className="text-[10px] font-normal text-slate-600 uppercase tracking-widest leading-none">Financial Control Framework</p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between p-10 bg-white/[0.02] rounded-[32px] border border-white/5 transition-all hover:bg-white/[0.04]">
-              <div className="space-y-2">
-                <h4 className="font-light text-xl text-white uppercase tracking-tight leading-none">เบิกจ่ายเกินงวดได้</h4>
-                <p className="text-xs text-slate-500 font-normal tracking-tight opacity-70">Over-budget allocation permission for critical tasks</p>
-              </div>
-              <button 
-                onClick={() => setFormData({...formData, allowOverBudget: !formData.allowOverBudget})}
-                className={`w-14 h-7 rounded-full relative transition-all duration-500 border border-white/5 ${formData.allowOverBudget ? 'bg-indigo-600 shadow-[0_0_20px_rgba(79,70,229,0.3)]' : 'bg-slate-900'}`}
-              >
-                <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all duration-500 shadow-xl ${formData.allowOverBudget ? 'left-[30px]' : 'left-1'}`} />
-              </button>
             </div>
           </section>
         </div>
@@ -329,7 +306,7 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
 function SummaryRow({ label, value }: { label: string, value: string }) {
   return (
     <div className="space-y-1.5 border-l border-white/5 pl-5">
-      <p className="text-[10px] font-light text-slate-500 uppercase tracking-tight opacity-70">{label}</p>
+      <p className="text-[10px] font-light text-slate-300 uppercase tracking-tight opacity-90">{label}</p>
       <p className="text-lg font-light text-white uppercase tracking-tight truncate leading-none">{value}</p>
     </div>
   );

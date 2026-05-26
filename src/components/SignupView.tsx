@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Mail, Lock, User, Construction, ArrowLeft, AlertCircle } from 'lucide-react';
 import { auth, db } from '../lib/firebase';
+import Logo from './Logo.tsx';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 
@@ -73,10 +74,7 @@ export default function SignupView({ onNavigateLogin }: SignupViewProps) {
           className="relative z-10 space-y-8"
         >
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-indigo-600 rounded-xl shadow-2xl shadow-indigo-600/40">
-              <Construction className="text-white w-6 h-6" />
-            </div>
-            <h1 className="text-xl font-black text-white uppercase tracking-tight">B IDEA CONSTRUCTION</h1>
+            <Logo className="max-w-full h-[50px] md:h-[70px] text-cyan-400" />
           </div>
           
           <div className="space-y-4">
@@ -107,7 +105,8 @@ export default function SignupView({ onNavigateLogin }: SignupViewProps) {
             กลับไปเข้าสู่ระบบ
           </button>
 
-          <div className="text-center space-y-2 pt-6">
+          <div className="text-center space-y-3 pt-6 flex flex-col items-center">
+            <Logo className="max-w-full h-[85px] md:h-[100px] object-contain mb-3 text-cyan-400" />
             <h2 className="text-2xl font-light text-white uppercase tracking-tight leading-none">สร้างบัญชีใหม่</h2>
             <p className="text-[9px] font-normal text-slate-500 uppercase tracking-[0.4em]">B IDEA CONSTRUCTION CO., LTD.</p>
           </div>

@@ -2,5 +2,5 @@
   "name": "B IDEA CONSTRUCTION",
   "description": "Professional Construction Management System with high-fidelity dashboard and interactive Gantt chart for B IDEA CONSTRUCTION.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

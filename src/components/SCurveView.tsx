@@ -46,7 +46,32 @@ interface SCurveViewProps {
   onBack: () => void;
 }
 
-export default function SCurveView({ project, onBack }: SCurveViewProps) {
+export default function SCurveView({ project: propProject, onBack }: SCurveViewProps) {
+  const lastProjectRef = React.useRef<ProjectInfo | null>(null);
+  if (propProject) {
+    lastProjectRef.current = propProject;
+  }
+  const project = propProject || lastProjectRef.current || {
+    id: '',
+    name: 'กำลังโหลด...',
+    contractor: '',
+    contractId: '',
+    budget: '0',
+    startDate: '-',
+    endDate: '-',
+    durationDays: 0,
+    extension: 0,
+    location: '',
+    allowOverBudget: false,
+    ownerId: '',
+    memberIds: [],
+    progress: 0,
+    imageUrl: '',
+    apiUrl: '',
+    editUrl: '',
+    sheetId: ''
+  };
+
   const [tasks, setTasks] = useState<BOQItem[]>([]);
   const [categoriesData, setCategoriesData] = useState<CategoryInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -221,8 +246,8 @@ export default function SCurveView({ project, onBack }: SCurveViewProps) {
         </div>
         <div className="flex items-center gap-4">
            <div className="hidden sm:flex flex-col items-end">
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Project Progress</span>
-              <span className="text-lg font-black text-blue-600">{stats.currentActual.toFixed(2)}%</span>
+              <span className="text-[10px] font-normal text-slate-400 uppercase tracking-widest">Project Progress</span>
+              <span className="text-lg font-normal text-blue-600">{stats.currentActual.toFixed(2)}%</span>
            </div>
         </div>
       </header>
@@ -236,12 +261,12 @@ export default function SCurveView({ project, onBack }: SCurveViewProps) {
               <div className="w-10 h-10 bg-blue-50 rounded-2xl flex items-center justify-center">
                 <Target className="w-5 h-5 text-blue-600" />
               </div>
-              <span className="text-[10px] font-black bg-blue-100 text-blue-600 px-3 py-1 rounded-full uppercase">Planned</span>
+              <span className="text-[10px] font-normal bg-blue-100 text-blue-600 px-3 py-1 rounded-full uppercase">Planned</span>
             </div>
             <div>
-              <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Target Progress</p>
+              <p className="text-xs font-normal text-slate-400 uppercase tracking-widest mb-1">Target Progress</p>
               <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-black text-slate-900">{stats.currentPlan}%</span>
+                <span className="text-4xl font-normal text-slate-900">{stats.currentPlan}%</span>
               </div>
             </div>
           </div>
@@ -251,12 +276,12 @@ export default function SCurveView({ project, onBack }: SCurveViewProps) {
               <div className="w-10 h-10 bg-emerald-50 rounded-2xl flex items-center justify-center">
                 <Zap className="w-5 h-5 text-emerald-600" />
               </div>
-              <span className="text-[10px] font-black bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full uppercase">Actual</span>
+              <span className="text-[10px] font-normal bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full uppercase">Actual</span>
             </div>
             <div>
-              <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Current Progress</p>
+              <p className="text-xs font-normal text-slate-400 uppercase tracking-widest mb-1">Current Progress</p>
               <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-black text-slate-900">{stats.currentActual}%</span>
+                <span className="text-4xl font-normal text-slate-900">{stats.currentActual}%</span>
               </div>
             </div>
           </div>
@@ -266,14 +291,14 @@ export default function SCurveView({ project, onBack }: SCurveViewProps) {
               <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${stats.variance >= 0 ? 'bg-emerald-50' : 'bg-rose-50'}`}>
                 {stats.variance >= 0 ? <ArrowUpRight className="w-5 h-5 text-emerald-600" /> : <ArrowDownRight className="w-5 h-5 text-rose-600" />}
               </div>
-              <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase ${stats.variance >= 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+              <span className={`text-[10px] font-normal px-3 py-1 rounded-full uppercase ${stats.variance >= 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
                 {stats.variance >= 0 ? 'Ahead of Schedule' : 'Behind Schedule'}
               </span>
             </div>
             <div>
-              <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Variance</p>
+              <p className="text-xs font-normal text-slate-400 uppercase tracking-widest mb-1">Variance</p>
               <div className="flex items-baseline gap-2">
-                <span className={`text-4xl font-black ${stats.variance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                <span className={`text-4xl font-normal ${stats.variance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                   {stats.variance > 0 ? '+' : ''}{stats.variance}%
                 </span>
               </div>
@@ -291,11 +316,11 @@ export default function SCurveView({ project, onBack }: SCurveViewProps) {
             <div className="flex items-center gap-6 bg-slate-50 p-3 rounded-2xl border border-slate-200">
                <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Plan</span>
+                  <span className="text-[10px] font-normal text-slate-500 uppercase tracking-widest">Plan</span>
                </div>
                <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Actual</span>
+                  <span className="text-[10px] font-normal text-slate-500 uppercase tracking-widest">Actual</span>
                </div>
             </div>
           </div>
@@ -398,12 +423,12 @@ export default function SCurveView({ project, onBack }: SCurveViewProps) {
              </div>
              <div className="space-y-3">
                 <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl">
-                   <span className="text-xs font-bold text-slate-500">Project Start Date</span>
-                   <span className="text-sm font-black text-slate-700">{project.startDate ? format(parseISO(project.startDate), 'PPP', { locale: th }) : '-'}</span>
+                   <span className="text-xs font-normal text-slate-500">Project Start Date</span>
+                   <span className="text-sm font-normal text-slate-700">{project.startDate ? format(parseISO(project.startDate), 'PPP', { locale: th }) : '-'}</span>
                 </div>
                 <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl">
-                   <span className="text-xs font-bold text-slate-500">Scheduled End Date</span>
-                   <span className="text-sm font-black text-slate-700">{project.endDate ? format(parseISO(project.endDate), 'PPP', { locale: th }) : '-'}</span>
+                   <span className="text-xs font-normal text-slate-500">Scheduled End Date</span>
+                   <span className="text-sm font-normal text-slate-700">{project.endDate ? format(parseISO(project.endDate), 'PPP', { locale: th }) : '-'}</span>
                 </div>
              </div>
           </div>
@@ -415,8 +440,8 @@ export default function SCurveView({ project, onBack }: SCurveViewProps) {
              </div>
              <p className="text-slate-400 text-sm leading-relaxed">
                 ขณะนี้โครงการอยู่ในสภาวะ {stats.variance >= 0 ? 
-                  <span className="text-emerald-400 font-bold">ปกติหรือเร็วกว่าแผนงาน</span> : 
-                  <span className="text-rose-400 font-bold">ล่าช้ากว่าแผนงานที่วางไว้</span>
+                  <span className="text-emerald-400 font-normal">ปกติหรือเร็วกว่าแผนงาน</span> : 
+                  <span className="text-rose-400 font-normal">ล่าช้ากว่าแผนงานที่วางไว้</span>
                 } โดยมีส่วนต่างความก้าวหน้าอยู่ที่ {Math.abs(stats.variance)}%
                 {stats.variance < 0 && " ควรพิจารณาปรับแผนเร่งรัดงานหรือใช้มาตรการแก้ไขเพื่อให้กลับมาอยู่ในเป้าหมายหลัก"}
              </p>

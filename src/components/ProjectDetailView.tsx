@@ -66,7 +66,32 @@ interface ProjectDetailViewProps {
   userRole?: 'manager' | 'engineer' | null;
 }
 
-export default function ProjectDetailView({ project, onBack, userRole }: ProjectDetailViewProps) {
+export default function ProjectDetailView({ project: propProject, onBack, userRole }: ProjectDetailViewProps) {
+  const lastProjectRef = React.useRef<ProjectInfo | null>(null);
+  if (propProject) {
+    lastProjectRef.current = propProject;
+  }
+  const project = propProject || lastProjectRef.current || {
+    id: '',
+    name: 'กำลังโหลด...',
+    contractor: '',
+    contractId: '',
+    budget: '0',
+    startDate: '-',
+    endDate: '-',
+    durationDays: 0,
+    extension: 0,
+    location: '',
+    allowOverBudget: false,
+    ownerId: '',
+    memberIds: [],
+    progress: 0,
+    imageUrl: '',
+    apiUrl: '',
+    editUrl: '',
+    sheetId: ''
+  };
+
   const [showGantt, setShowGantt] = useState(false);
   const [showSCurve, setShowSCurve] = useState(false);
   const [showProjectInfo, setShowProjectInfo] = useState(false);
@@ -80,11 +105,29 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Cache check helper
+  const getCachedData = React.useCallback(() => {
+    try {
+      const cached = localStorage.getItem(`project_api_cache_${project.id}`);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (e) {
+      console.error("Error loading cache", e);
+    }
+    return null;
+  }, [project.id]);
+
+  const [initialCache] = useState(() => getCachedData());
+
   // External data state
-  const [externalProgress, setExternalProgress] = useState<number | null>(null);
-  const [externalBudget, setExternalBudget] = useState<number | null>(null);
-  const [externalPlanProgress, setExternalPlanProgress] = useState<number | null>(null);
-  const [summaryData, setSummaryData] = useState({
+  const [externalProgress, setExternalProgress] = useState<number | null>(initialCache?.externalProgress ?? null);
+  const [externalBudget, setExternalBudget] = useState<number | null>(initialCache?.externalBudget ?? null);
+  const [externalPlanProgress, setExternalPlanProgress] = useState<number | null>(initialCache?.externalPlanProgress ?? null);
+
+  const progress = externalProgress !== null ? externalProgress : (project.progress || 0);
+  const budget = externalBudget !== null ? externalBudget : (project.budget || 0);
+  const [summaryData, setSummaryData] = useState(initialCache?.summaryData || {
     planTotal: '0.00%',
     actualTotal: '0.00%',
     projectBudget: '0',
@@ -94,58 +137,267 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
     planMonthlyPct: 0,
     actualMonthlyPct: 0,
     startDate: '-',
-    endDate: '-'
+    endDate: '-',
+    monthlyDeduction: '0',
+    netBalance: '0',
+    netBalanceAllMonths: '0'
   });
-  const [lastSync, setLastSync] = useState<Date | null>(null);
+
+  // Global Sheet Number Parsers & Formatters
+  const parseThaiNumber = (str: any): number => {
+    if (str === null || str === undefined || str === "") return 0;
+    let s = String(str).trim();
+    let isNegative = false;
+    // วงเล็บ = ค่าติดลบ
+    if (s.startsWith("(") && s.endsWith(")")) { isNegative = true; s = s.slice(1, -1); }
+    // ลบ comma, %, เครื่องหมาย ฿ และช่องว่าง
+    s = s.replace(/[,%฿\s]/g, "");
+    if (s.startsWith("-")) { isNegative = true; s = s.slice(1); }
+    let num = parseFloat(s);
+    if (isNaN(num)) return 0;
+    return isNegative ? -num : num;
+  };
+
+  const cleanNum = (val: any): number => {
+    return parseThaiNumber(val);
+  };
+
+  const formatPct = (num: number) => num.toFixed(2) + '%';
+  const formatCurrency = (val: any) => {
+    const num = typeof val === 'number' ? val : parseThaiNumber(val);
+    return num.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Helper function to find word (matching user's request with TS safety and deep tolerance)
+  const getValue = (dataArray: any[][] | null | undefined, keyword: string, colIndex: number): string => {
+    if (!dataArray || !Array.isArray(dataArray)) return "0";
+    const lowerKeyword = keyword.toLowerCase().trim();
+    for (let i = 0; i < dataArray.length; i++) {
+      if (!Array.isArray(dataArray[i])) continue;
+      for (let j = 0; j < dataArray[i].length; j++) {
+        const cell = dataArray[i][j];
+        if (cell) {
+          const cellStr = cell.toString().toLowerCase().trim();
+          if (cellStr.includes(lowerKeyword)) {
+            // Found the keyword in row i at cell j!
+            
+            // 1. Get all non-empty cells to the right of j in this row
+            const candidates: { value: string, idx: number }[] = [];
+            for (let k = j + 1; k < dataArray[i].length; k++) {
+              const val = dataArray[i][k];
+              if (val !== undefined && val !== null) {
+                const valStr = val.toString().trim();
+                if (valStr !== "") {
+                  candidates.push({ value: valStr, idx: k });
+                }
+              }
+            }
+            
+            if (candidates.length === 0) {
+              // No elements next to it. Just return the requested index if it's there
+              const fallback = dataArray[i][colIndex];
+              return fallback !== undefined && fallback !== null ? fallback.toString().trim() : "0";
+            }
+            
+            // 2. Classify if we are looking for a PERCENTAGE or an AMOUNT/MONEY
+            const isLookingForPct = 
+              keyword.includes('%') || 
+              keyword.toLowerCase().includes('pct') || 
+              keyword.includes('สะสม') || 
+              keyword.includes('ความก้าวหน้า') || 
+              colIndex === 7;
+              
+            // Let's check if the specific requested colIndex has a valid value and is present in candidates
+            const exactMatch = candidates.find(c => c.idx === colIndex);
+            if (exactMatch) {
+              return exactMatch.value;
+            }
+            
+            if (isLookingForPct) {
+              // Find first candidate that has a '%' sign
+              const pctMatch = candidates.find(c => c.value.includes('%'));
+              if (pctMatch) return pctMatch.value;
+              
+              // Or find the smallest positive number candidate that looks like a percentage (e.g. <= 100)
+              for (const c of candidates) {
+                const cleaned = parseFloat(c.value.replace(/[^0-9.-]+/g, ""));
+                if (!isNaN(cleaned) && cleaned >= 0 && cleaned <= 100 && !c.value.includes(',') && c.value.length < 8) {
+                  return c.value;
+                }
+              }
+              
+              // Default to first candidate
+              return candidates[0].value;
+            } else {
+              // Looking for currency/budget/large number
+              // Find first candidate that does NOT contain '%' and has larger digits or commas
+              const valMatch = candidates.find(c => !c.value.includes('%') && (c.value.includes(',') || parseFloat(c.value.replace(/[^0-9.-]+/g, "")) > 100));
+              if (valMatch) return valMatch.value;
+              
+              // Default to second candidate if first is percentage
+              if (candidates.length > 1 && candidates[0].value.includes('%')) {
+                return candidates[1].value;
+              }
+              
+              return candidates[0].value;
+            }
+          }
+        }
+      }
+    }
+    return "0";
+  };
+
+  // Helper with multiple fallback keywords
+  const getRowValueByMultipleKeywords = (data: any[][] | null | undefined, keywords: string[], colIdx: number): string => {
+    for (const keyword of keywords) {
+      const val = getValue(data, keyword, colIdx);
+      if (val !== "0" && val !== "") return val;
+    }
+    return "0";
+  };
+
+  // Helper to clean clean numbers matching the user requirement
+  const cleanNumString = (val: string): number => {
+    return parseThaiNumber(val);
+  };
+
+  const [lastSync, setLastSync] = useState<Date | null>(initialCache?.lastSync ? new Date(initialCache.lastSync) : null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [rawRows, setRawRows] = useState<any[][] | null>(null);
+  const [apiData, setApiData] = useState<any | null>(initialCache?.responseData || null);
+  const [sCurveJsonData, setSCurveJsonData] = useState<any[] | null>(null);
   const [sCurveRawRows, setSCurveRawRows] = useState<any[][] | null>(null);
   const [dashMonthOptions, setDashMonthOptions] = useState<{key: string, label: string, indices: number[]}[]>([]);
   const [selectedDashMonth, setSelectedDashMonth] = useState<string>('');
   const [sCurveMode, setSCurveMode] = useState<'weekly' | 'monthly'>('monthly');
+  const [isMobile, setIsMobile] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Universal Installment Period Normalizer (Cycle: 16th to 15th)
   const getInstallmentPeriod = (cellValue: any) => {
     if (!cellValue) return null;
     
-    let day, month, year;
+    let day = 15, month = 1, year = 2569;
     
-    // 1. Case: String '16/1/2569' or '16/01/2569'
-    if (typeof cellValue === 'string' && cellValue.includes('/')) {
-      const parts = cellValue.split('/');
-      if (parts.length >= 3) {
-        day = parseInt(parts[0]);
-        month = parseInt(parts[1]);
-        year = parseInt(parts[2]);
-      } else if (parts.length === 2) {
-        // Fallback for M/YYYY if no day provided (assume day 1)
-        day = 1;
-        month = parseInt(parts[0]);
-        year = parseInt(parts[1]);
-      } else {
-        return null;
-      }
-    } 
-    // 2. Case: Google Sheets Serial Number (e.g. 45674)
-    else if (typeof cellValue === 'number') {
-      const excelDate = new Date((cellValue - 25569) * 86400 * 1000);
+    const cellStr = cellValue.toString().trim();
+    if (!cellStr) return null;
+
+    // Is it a number (or number represented as string) like 45674?
+    const numVal = Number(cellStr);
+    if (!isNaN(numVal) && numVal > 30000 && numVal < 60000) {
+      const excelDate = new Date((numVal - 25569) * 86400 * 1000);
       day = excelDate.getUTCDate();
       month = excelDate.getUTCMonth() + 1;
-      year = excelDate.getUTCFullYear() + 543;
-    } 
-    // 3. Case: Date Object or ISO String
-    else {
-      const d = new Date(cellValue);
-      if (isNaN(d.getTime())) return null;
+      year = excelDate.getUTCFullYear();
+      if (year < 2500) year += 543;
+      return { day, month, year };
+    }
+
+    // Thai/English month abbreviations and names
+    const thaiMonths = [
+      ['ม.ค.', 'มกราคม', 'jan'],
+      ['ก.พ.', 'กุมภาพันธ์', 'feb'],
+      ['มี.ค.', 'มีนาคม', 'mar'],
+      ['เม.ย.', 'เมษายน', 'apr'],
+      ['พ.ค.', 'พฤษภาคม', 'may'],
+      ['มิ.ย.', 'มิถุนายน', 'jun'],
+      ['ก.ค.', 'กรกฎาคม', 'jul'],
+      ['ส.ค.', 'สิงหาคม', 'aug'],
+      ['ก.ย.', 'กันยายน', 'sep'],
+      ['ต.ค.', 'ตุลาคม', 'oct'],
+      ['พ.ย.', 'พฤศจิกายน', 'nov'],
+      ['ธ.ค.', 'ธันวาคม', 'dec']
+    ];
+
+    // Check if contains any Thai or English month keyword
+    const lowerVal = cellStr.toLowerCase();
+    let foundMonthIndex = -1;
+    for (let i = 0; i < thaiMonths.length; i++) {
+      if (thaiMonths[i].some(keyword => lowerVal.includes(keyword))) {
+        foundMonthIndex = i;
+        break;
+      }
+    }
+
+    if (foundMonthIndex !== -1) {
+      month = foundMonthIndex + 1;
+      // Extract numbers to find day and year
+      const numbers = cellStr.match(/\d+/g);
+      if (numbers && numbers.length > 0) {
+        if (numbers.length === 1) {
+          // only year is specified (could be 69 or 2569 or 2026)
+          let yr = parseInt(numbers[0]);
+          if (yr < 100) {
+            yr += 2500;
+          } else if (yr < 2400) {
+            yr += 543;
+          }
+          year = yr;
+          day = 15; // default middle month
+        } else if (numbers.length >= 2) {
+          // day and year
+          let dVal = parseInt(numbers[0]);
+          let yr = parseInt(numbers[1]);
+          if (yr < 100) {
+            yr += 2500;
+          } else if (yr < 2400) {
+            yr += 543; // convert AD to BE
+          }
+          day = dVal;
+          year = yr;
+        }
+      }
+      return { day, month, year };
+    }
+
+    // Case: String '16/1/2569' or '16/01/2569' or '16-1-2569' or '16 1 2569'
+    const parts = cellStr.split(/[\/\-\s]+/);
+    if (parts.length >= 3) {
+      let dVal = parseInt(parts[0]);
+      let mVal = parseInt(parts[1]);
+      let yVal = parseInt(parts[2]);
+      
+      if (!isNaN(dVal) && !isNaN(mVal) && !isNaN(yVal)) {
+        if (mVal > 12 && dVal <= 12) {
+          // MM/DD/YYYY format fallback
+          const temp = dVal;
+          dVal = mVal;
+          mVal = temp;
+        }
+        if (yVal < 100) yVal += 2500;
+        if (yVal < 2450) yVal += 543; // Convert AD to BE
+        return { day: dVal, month: mVal, year: yVal };
+      }
+    } else if (parts.length === 2) {
+      let mVal = parseInt(parts[0]);
+      let yVal = parseInt(parts[1]);
+      if (!isNaN(mVal) && !isNaN(yVal)) {
+        if (yVal < 100) yVal += 2500;
+        if (yVal < 2450) yVal += 543;
+        return { day: 15, month: mVal, year: yVal };
+      }
+    }
+
+    // Default: Date instance parsing
+    const d = new Date(cellValue);
+    if (!isNaN(d.getTime())) {
       day = d.getDate();
       month = d.getMonth() + 1;
       year = d.getFullYear();
-      if (year < 2500) year += 543; // Convert to B.E. if needed
+      if (year < 2500) year += 543;
+      return { day, month, year };
     }
 
-    if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
-    return { day, month, year };
+    return null;
   };
 
   const getDayDiff = (d1: {day: number, month: number, year: number}, d2: {day: number, month: number, year: number}) => {
@@ -174,6 +426,103 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
     return targetMonth + "-" + targetYear; // e.g. "1-2569"
   };
 
+  const THAI_MONTH_NAMES = [
+    "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+    "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+  ];
+
+  const THAI_MONTH_SHORT_NAMES = [
+    "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+    "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."
+  ];
+
+  const parseThaiDate = (str: any): Date | null => {
+    if (!str) return null;
+    const parts = String(str).trim().split("/");
+    if (parts.length < 3) return null;
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    let y = parseInt(parts[2], 10);
+    if (y > 2400) y -= 543; // พ.ศ. -> ค.ศ.
+    return new Date(y, m - 1, d);
+  };
+
+  const parseValToDecimal = (cellVal: any): number => {
+    if (cellVal === null || cellVal === undefined || cellVal === "") return 0;
+    const str = String(cellVal).trim();
+    const hasPercent = str.includes('%');
+    let num = parseThaiNumber(str);
+    if (hasPercent) {
+      return num / 100;
+    }
+    return num;
+  };
+
+  const getMonthlySum = (dailyList: any[], month: number, thaiYear: number) => {
+    const gregorianY = thaiYear - 543;
+    const endPeriodDate = new Date(gregorianY, month - 1, 15, 23, 59, 59, 999);
+    
+    let startPeriodMonth = month - 2; // zero-based month, previous month is month - 2
+    let startPeriodYear = gregorianY;
+    if (month === 1) {
+      startPeriodMonth = 11; // December
+      startPeriodYear = gregorianY - 1;
+    }
+    const startPeriodDate = new Date(startPeriodYear, startPeriodMonth, 16, 0, 0, 0, 0);
+
+    let planSum = 0;
+    let actualSum = 0;
+
+    for (const item of dailyList) {
+      if (!item || !item.date) continue;
+      const itemDate = parseThaiDate(item.date);
+      if (itemDate) {
+        const itemTime = itemDate.getTime();
+        if (itemTime >= startPeriodDate.getTime() && itemTime <= endPeriodDate.getTime()) {
+          planSum += parseValToDecimal(item.plan);
+          actualSum += parseValToDecimal(item.actual);
+        }
+      }
+    }
+
+    return { planSum, actualSum };
+  };
+
+  // Human-oriented, whitespace-normalized labeling search helper
+  const findByLabel = (rows: any[][] | null | undefined, labelAndFallbacks: string | string[], colOffset: number): any => {
+    if (!rows || !Array.isArray(rows)) return "";
+    const labels = Array.isArray(labelAndFallbacks) ? labelAndFallbacks : [labelAndFallbacks];
+    
+    // Normalize targets to check spaces & lowercase
+    const normTargets = labels.map(l => ({
+      exact: l.trim(),
+      normalized: l.trim().replace(/\s+/g, ' ').toLowerCase()
+    }));
+    
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || !Array.isArray(row)) continue;
+      for (let c = 0; c < row.length; c++) {
+        const cellVal = row[c];
+        if (cellVal === null || cellVal === undefined) continue;
+        const cellText = String(cellVal).trim();
+        const cellNormalized = cellText.replace(/\s+/g, ' ').toLowerCase();
+        
+        for (const target of normTargets) {
+          if (cellText === target.exact || cellNormalized === target.normalized) {
+            return row[c + colOffset] ?? "";
+          }
+          // Support substring matching for longer target strings
+          if (target.normalized.length > 3 && cellNormalized.includes(target.normalized)) {
+            return row[c + colOffset] ?? "";
+          }
+        }
+      }
+    }
+    console.log(`[findByLabel] Label NOT found: ${JSON.stringify(labels)}`);
+    return "";
+  };
+
   const fetchExternalData = useCallback(async () => {
     if (!project.apiUrl) {
       setIsSyncing(false);
@@ -181,392 +530,832 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
     }
     setIsSyncing(true);
     setFetchError(null);
-    const apiUrl = project.apiUrl;
-    const proxyUrl = `/api/proxy?url=${encodeURIComponent(apiUrl)}`;
-    
-    const sCurveApiUrl = apiUrl.includes('?') ? `${apiUrl}&sheet=S-CURVE` : `${apiUrl}?sheet=S-CURVE`;
-    const sCurveProxyUrl = `/api/proxy?url=${encodeURIComponent(sCurveApiUrl)}`;
-    
+
     try {
-      const response = await fetch(proxyUrl);
-      
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await response.text();
-        if (text.includes('<!DOCTYPE html>') || text.includes('<html')) {
-          throw new Error("Server returned HTML instead of JSON. Ensure direct API access is configured.");
-        }
+      const proxyUrl = `/api/proxy?url=${encodeURIComponent(project.apiUrl)}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) {
+        throw new Error(`HTTP Error ${res.status}`);
       }
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP Error ${response.status}: ${response.statusText}`);
-      }
-      
-      const rows = await response.json() as any[][];
-      
-      // Fetch S-Curve sheet separately
+      const text = await res.text();
+      let parsedJson: any;
       try {
-        const sCurveResponse = await fetch(sCurveProxyUrl);
-        if (sCurveResponse.ok) {
-          const sCurveContentType = sCurveResponse.headers.get('content-type') || '';
-          if (sCurveContentType.includes('application/json')) {
-            const sCurveRows = await sCurveResponse.json() as any[][];
-            setSCurveRawRows(sCurveRows);
-          }
+        parsedJson = JSON.parse(text);
+      } catch (e) {
+        const startIdx = text.indexOf('{');
+        const endIdx = text.lastIndexOf('}');
+        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+          parsedJson = JSON.parse(text.substring(startIdx, endIdx + 1));
+        } else {
+          throw new Error("โครงสร้างข้อมูล JSON ไม่ถูกต้อง");
         }
-      } catch (sErr) {
-        console.error("Failed to fetch S-Curve sheet:", sErr);
       }
+
+      if (parsedJson.status !== "success" || !parsedJson.data) {
+        throw new Error(parsedJson.message || "การดึงข้อมูลจาก Google Apps Script ล้มเหลว");
+      }
+
+      const resData = parsedJson.data;
+      const s = resData.summary;
+      if (!s) {
+        throw new Error("โครงสร้างข้อมูล Summary ไม่ถูกต้อง");
+      }
+
+      setApiData(parsedJson);
+
+      const startDateStr = s.start_date || "-";
+      const endDateStr = s.end_date || "-";
+      const rawBudget = parseThaiNumber(s.budget);
+      const rawPlanAccumPct = parseThaiNumber(s.plan_cum);
+      const rawActualAccumPct = parseThaiNumber(s.actual_cum);
+      const rawCumIncome = parseThaiNumber(s.cum_income);
+      const rawNetBalance = parseThaiNumber(s.net_balance);
+
+      // Generate options
+      const generatedOptions: { key: string, label: string, month: number, year: number }[] = [];
+      const startD = parseThaiDate(startDateStr);
+      const endD = parseThaiDate(endDateStr);
       
-      if (rows && rows.length > 0) {
+      if (startD && endD) {
+        let curMonth = startD.getMonth(); // 0-11
+        let curYear = startD.getFullYear();
+        const endMonth = endD.getMonth(); // 0-11
+        const endYear = endD.getFullYear();
         
-        const findValueByColumnName = (keyword: string) => {
-          const headerRow = rows[0];
-          if (!headerRow) return null;
-          const colIndex = headerRow.findIndex((cell: any) => cell?.toString().includes(keyword));
-          if (colIndex !== -1) {
-            // value is always in data[1] (rows[1])
-            const val = rows[1]?.[colIndex];
-            return val ? val.toString().trim() : "-";
-          }
-          return null;
-        };
-
-        const findValue = (keyword: string) => {
-          const row = rows.find(r => r.some(cell => cell?.toString().includes(keyword)));
-          if (row) {
-            const idx = row.findIndex(cell => cell?.toString().includes(keyword));
-            for(let i = idx + 1; i < row.length; i++) {
-               if (row[i] !== undefined && row[i] !== null && row[i].toString().trim() !== '') return row[i];
-            }
-            return row[idx];
-          }
-          return null;
-        };
-
-        const formatPercentString = (label: string) => {
-          const val = findValue(label)?.toString() || "0.00%";
-          const num = parseFloat(val.toString().replace(/[%,]/g, ''));
-          if (isNaN(num)) return "0.00%";
-          return num.toFixed(2) + '%';
-        };
-
-        const formatMonthly = (keyword: string) => {
-          const row = rows.find(r => r.some(cell => cell?.toString().includes(keyword)));
-          if (row) {
-            const idx = row.findIndex(cell => cell?.toString().includes(keyword));
-            const values: string[] = [];
-            for(let i = idx + 1; i < row.length && values.length < 2; i++) {
-              const val = row[i]?.toString().trim();
-              if (val !== undefined && val !== null && val !== '') values.push(val);
-            }
-            
-            if (values.length >= 2) {
-              let pct = values[0];
-              let amt = values[1];
-              
-              const numPct = parseFloat(pct.replace(/[%,]/g, ''));
-              pct = isNaN(numPct) ? "0.00%" : numPct.toFixed(2) + '%';
-              
-              const numAmt = parseFloat(amt.replace(/[฿,]/g, ''));
-              const formattedAmt = isNaN(numAmt) ? "0.00" : numAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-              
-              return `${pct} (฿${formattedAmt})`;
-            }
-          }
-          return "0.00% (฿0.00)";
-        };
-
-        // Dynamic installment logic: 
-        // 1. Find Date Row (where first column is '1' or 1)
-        const totalBudgetRaw = rows[1]?.[2]; // Still using Row 2 Column C for budget as per request
-        const totalBudgetVal = parseFloat(totalBudgetRaw?.toString().replace(/[^0-9.]/g, '') || "0");
-        
-        let dateRowIndex = -1;
-        for (let i = 0; i < rows.length; i++) {
-          if (rows[i]?.[0]?.toString().trim() === '1') {
-            dateRowIndex = i;
-            break;
-          }
-        }
-
-        if (dateRowIndex !== -1 && totalBudgetVal > 0) {
-          const dateHeaderRow = rows[dateRowIndex];
-          const monthGroups = new Map<string, number[]>(); // "M/YYYY" -> Array of column indices
-          const allDateIndices: number[] = [];
-          
-          const thaiMonthMap: Record<string, string> = { 
-            '1': 'ม.ค.', '2': 'ก.พ.', '3': 'มี.ค.', '4': 'เม.ย.', '5': 'พ.ค.', '6': 'มิ.ย.', 
-            '7': 'ก.ค.', '8': 'ส.ค.', '9': 'ก.ย.', '10': 'ต.ค.', '11': 'พ.ย.', '12': 'ธ.ค.' 
-          };
-
-          console.log("Raw Date Row Data:", dateHeaderRow);
-
-          // 2. Scan for date columns starting from index 10
-            for (let colIdx = 10; colIdx < dateHeaderRow.length; colIdx++) {
-              const cellValue = dateHeaderRow[colIdx];
-              const key = getInstallmentKey(cellValue);
-              
-              if (key) {
-                if (!monthGroups.has(key)) {
-                  monthGroups.set(key, []);
-                }
-                monthGroups.get(key)?.push(colIdx);
-                allDateIndices.push(colIdx);
-              }
-            }
-
-        }
-
-        const cleanNum = (val: any) => {
-          if (val === undefined || val === null) return 0;
-          const str = val.toString().replace(/[%,฿\s]/g, '').replace(/,/g, '');
-          const num = parseFloat(str);
-          return isNaN(num) ? 0 : num;
-        };
-
-        const formatPct = (num: number) => num.toFixed(2) + '%';
-        const formatCurrency = (num: number) => num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-        const extracted = {
-          planTotal: formatPct(cleanNum(rows[2]?.[3])), // Row 3, Col D (data[2][3])
-          actualTotal: formatPct(cleanNum(rows[3]?.[3])), // Row 4, Col D (data[3][3])
-          projectBudget: formatCurrency(cleanNum(rows[1]?.[2])), // Row 2, Col C (data[1][2])
-          cumulativePayment: formatCurrency(cleanNum(rows[4]?.[2])), // Row 5, Col C (data[4][2])
-          planMonthly: `${formatPct(cleanNum(rows[4]?.[6]))} (฿${formatCurrency(cleanNum(rows[4]?.[7]))})`, // Row 5, Col G & H
-          actualMonthly: `${formatPct(cleanNum(rows[5]?.[6]))} (฿${formatCurrency(cleanNum(rows[5]?.[7]))})`, // Row 6, Col G & H
-          planMonthlyPct: cleanNum(rows[4]?.[6]),
-          actualMonthlyPct: cleanNum(rows[5]?.[6]),
-          startDate: findValueByColumnName("วันเริ่มสัญญา") || "-",
-          endDate: findValueByColumnName("วันสิ้นสุดสัญญา") || "-"
-        };
-
-        setSummaryData(extracted);
-
-        // Update top highlights
-        setExternalProgress(cleanNum(rows[3]?.[3]));
-        setExternalPlanProgress(cleanNum(rows[2]?.[3]));
-        setExternalBudget(cleanNum(rows[1]?.[2]));
-
-        setRawRows(rows);
-        
-        // Generate dashboard month options
-        let dateRowIdxResult = -1;
-        for (let i = 0; i < rows.length; i++) {
-          if (rows[i]?.[0]?.toString().trim() === '1') {
-            dateRowIdxResult = i;
-            break;
-          }
-        }
-        
-        if (dateRowIdxResult !== -1) {
-          const dRow = rows[dateRowIdxResult];
-          const mGroups = new Map<string, number[]>();
-          const thaiMonthMap: Record<string, string> = { 
-            '1': 'ม.ค.', '2': 'ก.พ.', '3': 'มี.ค.', '4': 'เม.ย.', '5': 'พ.ค.', '6': 'มิ.ย.', 
-            '7': 'ก.ค.', '8': 'ส.ค.', '9': 'ก.ย.', '10': 'ต.ค.', '11': 'พ.ย.', '12': 'ธ.ค.' 
-          };
-          
-          for (let cIdx = 10; cIdx < dRow.length; cIdx++) {
-            const cellValue = dRow[cIdx];
-            const key = getInstallmentKey(cellValue);
-            if (key) {
-              if (!mGroups.has(key)) mGroups.set(key, []);
-              mGroups.get(key)?.push(cIdx);
-            }
-          }
-          
-          const sortedKeys = Array.from(mGroups.keys()).sort((a, b) => {
-            const [m1, y1] = a.split('-').map(Number);
-            const [m2, y2] = b.split('-').map(Number);
-            if (y1 !== y2) return y1 - y2;
-            return m1 - m2;
+        while (curYear < endYear || (curYear === endYear && curMonth <= endMonth)) {
+          const thaiYear = curYear + 543;
+          const monthLabel = `${THAI_MONTH_NAMES[curMonth]} ${thaiYear}`;
+          const key = `${curMonth + 1}-${thaiYear}`;
+          generatedOptions.push({
+            key,
+            label: monthLabel,
+            month: curMonth + 1,
+            year: thaiYear
           });
           
-          const options = sortedKeys.map(key => {
-            const [mStr, yStr] = key.split('-');
-            return {
-              key, // "M-YYYY"
-              label: `${thaiMonthMap[mStr] || mStr} ${yStr}`,
-              indices: mGroups.get(key) || []
-            };
-          });
-          
-          setDashMonthOptions(options);
-          
-          // Auto-select logic: Find the latest month with actual progress > 0
-          let latestActiveMonthKey = options.length > 0 ? options[options.length - 1].key : '';
-          
-          if (options.length > 0) {
-            const actualRows = rows.filter(r => r[14]?.toString().trim().toUpperCase() === "ACTUAL");
-            if (actualRows.length > 0) {
-              // Loop backwards from latest month to find first one with progress
-              for (let i = options.length - 1; i >= 0; i--) {
-                const opt = options[i];
-                let hasValue = false;
-                for (const idx of opt.indices) {
-                  for (const row of actualRows) {
-                    const valStr = row[idx]?.toString().replace(/[%,฿\s]/g, '').replace(/,/g, '');
-                    const val = parseFloat(valStr || "0");
-                    if (!isNaN(val) && val > 0) {
-                      hasValue = true;
-                      break;
-                    }
-                  }
-                  if (hasValue) break;
-                }
-                
-                if (hasValue) {
-                  latestActiveMonthKey = opt.key;
-                  break;
-                }
-              }
-            }
-          }
-
-          if (options.length > 0 && !selectedDashMonth) {
-            setSelectedDashMonth(latestActiveMonthKey);
+          curMonth++;
+          if (curMonth > 11) {
+            curMonth = 0;
+            curYear++;
           }
         }
-
-        setLastSync(new Date());
-      } else {
-        setFetchError("ไม่พบข้อมูลจาก API");
       }
+
+      // Calculate default month with actual progress
+      let initialSelectedKey = "";
+      if (generatedOptions.length > 0) {
+        let foundKey = "";
+        const dailyList = resData.daily || [];
+        for (let i = generatedOptions.length - 1; i >= 0; i--) {
+          const opt = generatedOptions[i];
+          const { actualSum } = getMonthlySum(dailyList, opt.month, opt.year);
+          if (actualSum > 0) {
+            foundKey = opt.key;
+            break;
+          }
+        }
+        
+        if (foundKey) {
+          initialSelectedKey = foundKey;
+        } else {
+          initialSelectedKey = generatedOptions[0]?.key || "";
+        }
+      }
+
+      setDashMonthOptions(generatedOptions as any);
+      setSelectedDashMonth(prev => {
+        if (prev && generatedOptions.some(o => o.key === prev)) {
+          return prev;
+        }
+        return initialSelectedKey;
+      });
+
+      // Update global states
+      const extracted = {
+        planTotal: formatPct(rawPlanAccumPct),
+        actualTotal: formatPct(rawActualAccumPct),
+        projectBudget: formatCurrency(rawBudget),
+        cumulativePayment: formatCurrency(rawCumIncome),
+        planMonthly: `0.00% (฿0.00)`,
+        actualMonthly: `0.00% (฿0.00)`,
+        planMonthlyPct: 0,
+        actualMonthlyPct: 0,
+        startDate: startDateStr,
+        endDate: endDateStr,
+        monthlyDeduction: formatCurrency(rawBudget - rawNetBalance),
+        netBalance: formatCurrency(rawNetBalance),
+        netBalanceAllMonths: formatCurrency(parseThaiNumber(s.net_balance_all_months))
+      };
+
+      setSummaryData(extracted);
+      setExternalProgress(rawActualAccumPct);
+      setExternalPlanProgress(rawPlanAccumPct);
+      setExternalBudget(rawBudget);
+
+      setLastSync(new Date());
       setIsSyncing(false);
+
+      try {
+        localStorage.setItem(`project_api_cache_${project.id}`, JSON.stringify({
+          responseData: parsedJson,
+          rows: null,
+          summaryData: extracted,
+          externalProgress: rawActualAccumPct,
+          externalPlanProgress: rawPlanAccumPct,
+          externalBudget: rawBudget,
+          lastSync: new Date().toISOString()
+        }));
+      } catch (cacheErr) {
+        console.error("Failed to save to cache:", cacheErr);
+      }
+
     } catch (error: any) {
       console.error("Fetch Error:", error);
-      setFetchError(error.message === 'Failed to fetch' 
-        ? "ไม่สามารถดึงข้อมูลได้ (อาจเกิดจาก CORS หรือ URL ไม่ถูกต้อง)" 
-        : `เกิดข้อผิดพลาด: ${error.message}`);
+      setFetchError(error.message || "เกิดข้อผิดพลาดในการดึงข้อมูลผ่าน API");
       setIsSyncing(false);
     }
-  }, [project.apiUrl]);
+  }, [project.apiUrl, progress, externalPlanProgress, project.id]);
 
   useEffect(() => {
     if (project.apiUrl) {
       fetchExternalData();
-      const interval = setInterval(fetchExternalData, 300000);
+      const interval = setInterval(fetchExternalData, 60000);
       return () => clearInterval(interval);
     }
   }, [fetchExternalData, project.apiUrl]);
 
   const isOwner = auth.currentUser?.uid === project.ownerId;
 
-  // Derived dashboard data
   const dashboardData = React.useMemo(() => {
-    if (!rawRows || !selectedDashMonth || dashMonthOptions.length === 0) return null;
-    
-    const totalBudgetRaw = rawRows[1]?.[2];
-    const totalBudget = parseFloat(totalBudgetRaw?.toString().replace(/[^0-9.]/g, '') || "0");
-    
-    // 1. Monthly Liquidity Calculation - Start from index 11
-    let monthlyPlanPct = 0;
-    let monthlyActualPct = 0;
-    
-    // Strict comparison based on Date Row (Index 10 is Row 11)
-    const dateRow = rawRows.find(r => r[0]?.toString().trim() === '1');
-    const targetIndices: number[] = [];
-    if (dateRow) {
-      for (let c = 10; c < dateRow.length; c++) {
-        const cellValue = dateRow[c];
-        const cellKey = getInstallmentKey(cellValue);
-        if (cellKey) {
-          console.log(`Dropdown Match Test - Selected: ${selectedDashMonth}, Column: ${c}, Normalized Key: ${cellKey}`);
-          if (cellKey === selectedDashMonth) {
-            targetIndices.push(c);
+    const cleanNumStringLocal = (str: any): number => {
+      return parseThaiNumber(str);
+    };
+
+    const formatCurrencyLocal = (num: number) => {
+      return num.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    if (apiData && apiData.status === "success" && apiData.data) {
+      const d = apiData.data;
+      const s = d.summary || {};
+      const rawBudget = parseThaiNumber(s.budget);
+      const rawCumIncome = parseThaiNumber(s.cum_income);
+      const rawRemaining = parseThaiNumber(s.remain_payout) || (rawBudget - rawCumIncome);
+      
+      let sMonth = 0;
+      let sYear = 0;
+      if (selectedDashMonth) {
+        const parts = selectedDashMonth.split("-");
+        sMonth = parseInt(parts[0], 10);
+        sYear = parseInt(parts[1], 10);
+      }
+
+      const matchedOpt = dashMonthOptions.find(o => o.key === selectedDashMonth);
+      const optionLabel = matchedOpt ? (matchedOpt as any).label : "";
+
+      const { planSum, actualSum } = getMonthlySum(d.daily || [], sMonth, sYear);
+
+      let planMonthPct = planSum;
+      let actualMonthPct = actualSum;
+
+      if (planMonthPct > 0 && planMonthPct <= 1) {
+        planMonthPct = planMonthPct * 100;
+      }
+      if (actualMonthPct > 0 && actualMonthPct <= 1) {
+        actualMonthPct = actualMonthPct * 100;
+      }
+
+      const planMonthBaht = (planMonthPct / 100) * rawBudget;
+      const actualMonthBaht = (actualMonthPct / 100) * rawBudget;
+
+      const rawPlanOverall = parseThaiNumber(s.plan_cum);
+      const rawActualOverall = parseThaiNumber(s.actual_cum);
+
+      // Extract "หักรายเดือน" table
+      const deductionsList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
+      let steelValue = 0;
+      let materialValue = 0;
+
+      const normalizeMonth = (str: any) => {
+        return String(str || "").trim().replace(/\s+/g, " ");
+      };
+
+      const selectedMonthLabel = optionLabel;
+      console.log("Looking for:", normalizeMonth(selectedMonthLabel));
+      console.log("Available:", deductionsList.map((item: any) => normalizeMonth(item?.month)));
+
+      if (deductionsList && deductionsList.length > 0 && selectedMonthLabel) {
+        const matchedDeduction = deductionsList.find((item: any) => {
+          if (!item || !item.month) return false;
+          return normalizeMonth(item.month) === normalizeMonth(selectedMonthLabel);
+        });
+
+        if (matchedDeduction) {
+          steelValue = parseThaiNumber(matchedDeduction.steel !== undefined ? matchedDeduction.steel : (matchedDeduction.steel_concrete_girder || matchedDeduction.steelConcreteGirder || 0));
+          materialValue = parseThaiNumber(matchedDeduction.material !== undefined ? matchedDeduction.material : (matchedDeduction.other_materials || matchedDeduction.otherMaterials || 0));
+        } else {
+          console.warn("❌ ไม่เจอเดือน:", selectedMonthLabel, "ในตาราง monthlyDeductions");
+        }
+      }
+
+      // 4. คำนวณฐาน และ Vat/หัก/ประกัน:
+      // ฐานคำนวณ = actualMonthBaht - steel - material (ไม่ใส่ Math.max เพื่อให้ติดลบได้ตามชีต)
+      const calculationBase = actualMonthBaht - steelValue - materialValue;
+      const vatValue = calculationBase * 0.07; // Vat 7% — เป็นเงินบวกเพิ่ม
+      const withholdingTaxValue = calculationBase * 0.03; // หัก ณ ที่จ่าย 3% — หักออก
+      const warrantyRetainageValue = calculationBase * 0.10; // ประกันผลงาน 10% — หักออก
+      
+      // รวมหักทั้งหมด = เหล็ก + วัสดุ + หักณที่จ่าย + ประกัน (ไม่รวม Vat)
+      const totalDeductions = steelValue + materialValue + withholdingTaxValue + warrantyRetainageValue;
+      
+      // คงเหลือ = Actual - เหล็ก - วัสดุ - หักณที่จ่าย - ประกัน + Vat
+      const netBalanceOfMonth = actualMonthBaht - steelValue - materialValue - withholdingTaxValue - warrantyRetainageValue + vatValue;
+
+      // บวกคงเหลือสุทธิของทุกเดือนใน deductionsList (monthlyDeductions) เพื่อความแม่นยำและไม่ต้องพึ่งเซลล์ในชีต
+      let totalNetAllMonths = 0;
+      if (deductionsList && deductionsList.length > 0) {
+        deductionsList.forEach((item: any) => {
+          const directNet = item.netBalance ?? item.net_balance ?? item.net ?? item['คงเหลือสุทธิ'] ?? item['ยอดคงเหลือสุทธิ'];
+          if (directNet !== undefined && directNet !== null && directNet !== "") {
+            const parsedDirect = parseThaiNumber(directNet);
+            if (!isNaN(parsedDirect) && parsedDirect !== 0) {
+              totalNetAllMonths += parsedDirect;
+              return;
+            }
+          }
+
+          let actBaht = 0;
+          const directActual = item.actual ?? item.actual_amount ?? item.actualAmount ?? item['ผลงาน'] ?? item['ผลงานจริง'];
+          if (directActual !== undefined && directActual !== null && directActual !== "") {
+            actBaht = parseThaiNumber(directActual);
+          } else {
+            const monthStr = String(item.month || "").trim();
+            let mMonth = 0;
+            let mYear = 0;
+            for (let idx = 0; idx < THAI_MONTH_NAMES.length; idx++) {
+              if (monthStr.includes(THAI_MONTH_NAMES[idx])) {
+                mMonth = idx + 1;
+                break;
+              }
+            }
+            const yearMatch = monthStr.match(/\b(25\d{2})\b/);
+            if (yearMatch) {
+              mYear = parseInt(yearMatch[1], 10);
+            }
+
+            if (mMonth > 0 && mYear > 0) {
+              const { actualSum } = getMonthlySum(d.daily || [], mMonth, mYear);
+              let actualMonthPct = actualSum;
+              if (actualMonthPct > 0 && actualMonthPct <= 1) {
+                actualMonthPct = actualMonthPct * 100;
+              }
+              actBaht = (actualMonthPct / 100) * rawBudget;
+            }
+          }
+
+          const steelVal = parseThaiNumber(item.steel !== undefined ? item.steel : (item.steel_concrete_girder || item.steelConcreteGirder || 0));
+          const materialVal = parseThaiNumber(item.material !== undefined ? item.material : (item.other_materials || item.otherMaterials || 0));
+
+          const calcBase = actBaht - steelVal - materialVal;
+          const vatVal = calcBase * 0.07;
+          const taxVal = calcBase * 0.03;
+          const retainageVal = calcBase * 0.10;
+          // คงเหลือ = Actual - เหล็ก - วัสดุ - หักณที่จ่าย - ประกัน + Vat
+          totalNetAllMonths += actBaht - steelVal - materialVal - taxVal - retainageVal + vatVal;
+        });
+      }
+
+      // Calculate dynamic cumulative payment and remaining payout based on the selected month
+      let dynamicCumPayment = 0;
+      let foundSelected = false;
+
+      if (deductionsList && deductionsList.length > 0 && selectedMonthLabel) {
+        for (let i = 0; i < deductionsList.length; i++) {
+          const item = deductionsList[i];
+          const isThisSelectedMonth = normalizeMonth(item.month) === normalizeMonth(selectedMonthLabel);
+
+          let actBaht = 0;
+          const directActual = item.actual ?? item.actual_amount ?? item.actualAmount ?? item['ผลงาน'] ?? item['ผลงานจริง'];
+          if (directActual !== undefined && directActual !== null && directActual !== "") {
+            actBaht = parseThaiNumber(directActual);
+          } else {
+            const monthStr = String(item.month || "").trim();
+            let mMonth = 0;
+            let mYear = 0;
+            for (let idx = 0; idx < THAI_MONTH_NAMES.length; idx++) {
+              if (monthStr.includes(THAI_MONTH_NAMES[idx])) {
+                mMonth = idx + 1;
+                break;
+              }
+            }
+            const yearMatch = monthStr.match(/\b(25\d{2})\b/);
+            if (yearMatch) {
+              mYear = parseInt(yearMatch[1], 10);
+            }
+
+            if (mMonth > 0 && mYear > 0) {
+              const { actualSum } = getMonthlySum(d.daily || [], mMonth, mYear);
+              let actualMonthPct = actualSum;
+              if (actualMonthPct > 0 && actualMonthPct <= 1) {
+                actualMonthPct = actualMonthPct * 100;
+              }
+              actBaht = (actualMonthPct / 100) * rawBudget;
+            }
+          }
+
+          dynamicCumPayment += actBaht;
+
+          if (isThisSelectedMonth) {
+            foundSelected = true;
+            break;
           }
         }
       }
+
+      // Fallback: calculate from daily logs up to the selected month if not found in deductionsList
+      if (!foundSelected && d.daily && d.daily.length > 0 && selectedDashMonth) {
+        let actualSumUpToSelected = 0;
+        const parts = selectedDashMonth.split("-");
+        const selMonth = parseInt(parts[0], 10);
+        const selYear = parseInt(parts[1], 10);
+
+        d.daily.forEach((item: any) => {
+          const iDate = parseThaiDate(item.date);
+          if (iDate) {
+            const iMonth = iDate.getMonth() + 1;
+            const iYear = iDate.getFullYear() + 543;
+            if (iYear < selYear || (iYear === selYear && iMonth <= selMonth)) {
+              actualSumUpToSelected += parseValToDecimal(item.actual);
+            }
+          }
+        });
+
+        let totalPlanSum = 0;
+        for (const item of d.daily) {
+          totalPlanSum += parseValToDecimal(item.plan);
+        }
+        const scaleMultiplier = totalPlanSum > 0 && totalPlanSum <= 1.05 ? 100 : 1;
+        const pctSum = actualSumUpToSelected * scaleMultiplier;
+        dynamicCumPayment = (pctSum / 100) * rawBudget;
+        foundSelected = true;
+      }
+
+      if (!foundSelected) {
+        dynamicCumPayment = rawCumIncome;
+      }
+
+      const dynamicRemaining = rawRemaining !== undefined && !isNaN(rawRemaining) && rawRemaining > 0 && !selectedMonthLabel
+        ? rawRemaining 
+        : Math.max(0, rawBudget - dynamicCumPayment);
+
+      return {
+        projectBudget: formatCurrencyLocal(rawBudget),
+        overallPlan: {
+          monthly: formatPct(planMonthPct),
+          cumulative: formatPct(rawPlanOverall)
+        },
+        overallActual: {
+          monthly: formatPct(actualMonthPct),
+          cumulative: formatPct(rawActualOverall)
+        },
+        steelConcreteGirder: steelValue.toString(),
+        otherMaterials: materialValue.toString(),
+        vat7: vatValue.toString(),
+        withholdingTax3: withholdingTaxValue.toString(),
+        warrantyRetainage10: warrantyRetainageValue.toString(),
+        monthlyDeduction: formatCurrencyLocal(totalDeductions),
+        monthlyPlan: {
+          pct: formatPct(planMonthPct),
+          amt: formatCurrencyLocal(planMonthBaht)
+        },
+        monthlyActual: {
+          pct: formatPct(actualMonthPct),
+          amt: formatCurrencyLocal(actualMonthBaht)
+        },
+        cumulativePayment: formatCurrencyLocal(dynamicCumPayment),
+        remainingPayment: formatCurrencyLocal(dynamicRemaining),
+        netBalance: formatCurrencyLocal(netBalanceOfMonth),
+        netBalanceRaw: netBalanceOfMonth,
+        netBalanceAllMonths: formatCurrencyLocal(totalNetAllMonths)
+      };
     }
 
-    for (let i = 11; i < rawRows.length; i++) {
-      const row = rawRows[i];
-      if (!row) continue;
-      
-      const label = row[14]?.toString().trim().toUpperCase() || "";
-      
-      if (label === "PLAN") {
-        targetIndices.forEach(idx => {
-          const cellVal = row[idx]?.toString().replace(/[%,]/g, '').trim() || "0";
-          const val = parseFloat(cellVal);
-          if (!isNaN(val)) monthlyPlanPct += val;
-        });
-      } else if (label === "ACTUAL") {
-        targetIndices.forEach(idx => {
-          const cellVal = row[idx]?.toString().replace(/[%,]/g, '').trim() || "0";
-          const val = parseFloat(cellVal);
-          if (!isNaN(val)) monthlyActualPct += val;
-        });
-      }
-    }
-    
-    const monthlyPlanAmt = (monthlyPlanPct / 100) * totalBudget;
-    const monthlyActualAmt = (monthlyActualPct / 100) * totalBudget;
-    
-    // 2. Cumulative Payment Calculation (from start to end of selected month)
-    // Find all indices chronologically up to selectedDashMonth
-    const [selM, selY] = selectedDashMonth.split('-').map(Number);
-    const cumulativeIndices: number[] = [];
-    if (dateRow) {
-      for (let c = 10; c < dateRow.length; c++) {
-        const cellValue = dateRow[c];
-        const cellKey = getInstallmentKey(cellValue);
-        if (cellKey) {
-          const [parsedM, parsedY] = cellKey.split('-').map(Number);
-          // Strict chronological comparison
-          if (parsedY < selY || (parsedY === selY && parsedM <= selM)) {
-            cumulativeIndices.push(c);
+    if (rawRows && rawRows.length >= 12) {
+      // 1. Core values from sheet (using direct 0-indexed lookup as requested by USER)
+      const rawBudget = cleanNumStringLocal(rawRows[7]?.[2]);
+      const rawPlanAccumPct = cleanNumStringLocal(rawRows[8]?.[3]); // D9
+      const rawActualAccumPct = cleanNumStringLocal(rawRows[9]?.[3]); // D10
+      const rawCumIncome = cleanNumStringLocal(rawRows[7]?.[7]); // H8
+      const rawRemaining = cleanNumStringLocal(rawRows[8]?.[7]); // H9
+      const rawNetBalance = cleanNumStringLocal(rawRows[11]?.[7]); // H12
+
+      const planMonthPct = cleanNumStringLocal(rawRows[4]?.[7]); // H5
+      const planMonthBaht = cleanNumStringLocal(rawRows[4]?.[8]); // I5
+      const actualMonthPct = cleanNumStringLocal(rawRows[5]?.[7]); // H6
+      const actualMonthBaht = cleanNumStringLocal(rawRows[5]?.[8]); // I6
+
+      // Deductions
+      const findVal = (rowKeyword: string, colIdx: number): string => {
+        const lowerKeyword = rowKeyword.toLowerCase().trim();
+        for (let i = 0; i < rawRows.length; i++) {
+          const row = rawRows[i];
+          if (!Array.isArray(row)) continue;
+          for (let j = 0; j < row.length; j++) {
+            const cell = row[j];
+            if (cell && cell.toString().toLowerCase().trim().includes(lowerKeyword)) {
+              const val = row[colIdx];
+              return val !== undefined && val !== null ? val.toString().trim() : "0.00";
+            }
           }
         }
-      }
-    }
-    
-    let cumulativeActualPct = 0;
-    for (let i = 11; i < rawRows.length; i++) {
-      const row = rawRows[i];
-      if (!row) continue;
-      const label = row[14]?.toString().trim().toUpperCase() || "";
+        return "0.00";
+      };
+
+      const findFirstToRight = (rowKeyword: string): string => {
+        const lowerKeyword = rowKeyword.toLowerCase().trim();
+        for (let i = 0; i < rawRows.length; i++) {
+          const row = rawRows[i];
+          if (!Array.isArray(row)) continue;
+          for (let j = 0; j < row.length; j++) {
+            const cell = row[j];
+            if (cell && cell.toString().toLowerCase().trim().includes(lowerKeyword)) {
+              for (let k = j + 1; k < row.length; k++) {
+                if (row[k] !== undefined && row[k] !== null && row[k].toString().trim() !== "") {
+                  return row[k].toString().trim();
+                }
+              }
+            }
+          }
+        }
+        return "0.00";
+      };
+
+      const steelConcreteGirderStr = findVal('เหล็ก , คอนกรีต , I-Girder', 2) !== "0.00" ? findVal('เหล็ก , คอนกรีต , I-Girder', 2) : findFirstToRight('เหล็ก , คอนกรีต , I-Girder');
+      const otherMaterialsStr = findVal('วัสดุอื่น ๆ', 2) !== "0.00" ? findVal('วัสดุอื่น ๆ', 2) : findFirstToRight('วัสดุอื่น ๆ');
+      const vat7Str = (() => {
+        const v1 = findVal('หัก Vat 7%', 2) !== "0.00" ? findVal('หัก Vat 7%', 2) : findFirstToRight('หัก Vat 7%');
+        if (v1 !== "0.00") return v1;
+        const v2 = findVal('เพิ่ม Vat 7%', 2) !== "0.00" ? findVal('เพิ่ม Vat 7%', 2) : findFirstToRight('เพิ่ม Vat 7%');
+        if (v2 !== "0.00") return v2;
+        return "0.00";
+      })();
+      const withholdingTax3Str = findVal('หัก ณ ที่จ่าย 3%', 2) !== "0.00" ? findVal('หัก ณ ที่จ่าย 3%', 2) : findFirstToRight('หัก ณ ที่จ่าย 3%');
+      const warrantyRetainage10Str = findVal('หักประกันผลงาน 10%', 2) !== "0.00" ? findVal('หักประกันผลงาน 10%', 2) : findFirstToRight('หักประกันผลงาน 10%');
+
+      const steelVal = cleanNumStringLocal(steelConcreteGirderStr);
+      const otherVal = cleanNumStringLocal(otherMaterialsStr);
+      const vatVal = cleanNumStringLocal(vat7Str);
+      const taxVal = cleanNumStringLocal(withholdingTax3Str);
+      const retainageVal = cleanNumStringLocal(warrantyRetainage10Str);
       
-      if (label === "ACTUAL") {
-        cumulativeIndices.forEach(c => {
-          const cellVal = row[c]?.toString().replace(/[%,]/g, '').trim() || "0";
-          const val = parseFloat(cellVal);
-          if (!isNaN(val)) cumulativeActualPct += val;
-        });
-      }
+      // ยอดรวมหักใช้จ่าย (ไม่รวม Vat)
+      const rawDeduction = steelVal + otherVal + taxVal + retainageVal;
+      const rawNetBalanceAllMonths = cleanNumStringLocal(rawRows[12]?.[7]); // H13
+
+      return {
+        projectBudget: formatCurrencyLocal(rawBudget),
+        overallPlan: {
+          monthly: formatPct(planMonthPct),
+          cumulative: formatPct(rawPlanAccumPct)
+        },
+        overallActual: {
+          monthly: formatPct(actualMonthPct),
+          cumulative: formatPct(rawActualAccumPct)
+        },
+        
+        steelConcreteGirder: steelConcreteGirderStr,
+        otherMaterials: otherMaterialsStr,
+        vat7: vat7Str,
+        withholdingTax3: withholdingTax3Str,
+        warrantyRetainage10: warrantyRetainage10Str,
+        monthlyDeduction: formatCurrencyLocal(rawDeduction),
+        
+        monthlyPlan: {
+          pct: formatPct(planMonthPct),
+          amt: formatCurrencyLocal(planMonthBaht)
+        },
+        monthlyActual: {
+          pct: formatPct(actualMonthPct),
+          amt: formatCurrencyLocal(actualMonthBaht)
+        },
+        
+        cumulativePayment: formatCurrencyLocal(rawCumIncome),
+        remainingPayment: formatCurrencyLocal(rawRemaining),
+        netBalance: formatCurrencyLocal(rawNetBalance),
+        netBalanceRaw: rawNetBalance,
+        netBalanceAllMonths: formatCurrencyLocal(rawNetBalanceAllMonths)
+      };
     }
-    
-    const cumulativePaymentAmt = (cumulativeActualPct / 100) * totalBudget;
-    
-    const formatCurrency = (num: number) => num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const formatPct = (num: number) => num.toFixed(2) + '%';
-    
+
     return {
-      monthlyPlan: `${formatPct(monthlyPlanPct)} (฿${formatCurrency(monthlyPlanAmt)})`,
-      monthlyActual: `${formatPct(monthlyActualPct)} (฿${formatCurrency(monthlyActualAmt)})`,
-      monthlyPlanPct,
-      monthlyActualPct,
-      cumulativePayment: formatCurrency(cumulativePaymentAmt),
-      projectBudget: formatCurrency(totalBudget)
+      projectBudget: summaryData.projectBudget || "0.00",
+      overallPlan: {
+        monthly: summaryData.planMonthlyPct ? formatPct(summaryData.planMonthlyPct) : "0.00%",
+        cumulative: summaryData.planTotal || "0.00%"
+      },
+      overallActual: {
+        monthly: summaryData.actualMonthlyPct ? formatPct(summaryData.actualMonthlyPct) : "0.00%",
+        cumulative: summaryData.actualTotal || "0.00%"
+      },
+      steelConcreteGirder: "0.00",
+      otherMaterials: "0.00",
+      vat7: "0.00",
+      withholdingTax3: "0.00",
+      warrantyRetainage10: "0.00",
+      monthlyDeduction: summaryData.monthlyDeduction || "0.00",
+      monthlyPlan: {
+        pct: summaryData.planMonthlyPct ? formatPct(summaryData.planMonthlyPct) : "0.00%",
+        amt: "0.00"
+      },
+      monthlyActual: {
+        pct: summaryData.actualMonthlyPct ? formatPct(summaryData.actualMonthlyPct) : "0.00%",
+        amt: "0.00"
+      },
+      cumulativePayment: summaryData.cumulativePayment || "0.00",
+      remainingPayment: "0.00",
+      netBalance: summaryData.netBalance || "0.00",
+      netBalanceRaw: 0,
+      netBalanceAllMonths: (summaryData as any).netBalanceAllMonths || "0.00"
     };
-  }, [rawRows, selectedDashMonth, dashMonthOptions]);
+  }, [rawRows, apiData, selectedDashMonth, dashMonthOptions, progress, externalPlanProgress, summaryData]);
 
   // S-Curve Data Preparation
   const sCurveData = React.useMemo(() => {
-    if (!sCurveRawRows || sCurveRawRows.length <= 2) return null;
+    if (apiData && apiData.status === "success" && apiData.data?.daily) {
+      const dailyList = apiData.data.daily;
+      const sortedDaily = [...dailyList].sort((a, b) => {
+        const da = parseThaiDate(a.date) || new Date(0);
+        const db = parseThaiDate(b.date) || new Date(0);
+        return da.getTime() - db.getTime();
+      });
+
+      const s = apiData.data.summary || {};
+      const startDateStr = s.start_date || (sortedDaily[0] ? sortedDaily[0].date : "");
+      const endDateStr = s.end_date || (sortedDaily[sortedDaily.length - 1] ? sortedDaily[sortedDaily.length - 1].date : "");
+
+      const startD = parseThaiDate(startDateStr);
+      const endD = parseThaiDate(endDateStr);
+
+      const labels: string[] = [];
+      const planCumulative: number[] = [];
+      const actualCumulative: (number | null)[] = [];
+
+      let runningPlan = 0;
+      let runningActual = 0;
+      let hasActualStarted = false;
+
+      // First pass: sum everything up to check scale
+      let totalPlanSum = 0;
+      for (const item of sortedDaily) {
+        totalPlanSum += parseValToDecimal(item.plan);
+      }
+      const scaleMultiplier = totalPlanSum > 0 && totalPlanSum <= 1.05 ? 100 : 1;
+
+      if (sCurveMode === 'monthly') {
+        // --- MONTHLY MODE ---
+        // 1. สร้าง array วันตั้งแต่ start_date บวกทีละเดือน (ทุกเดือน)
+        // 2. format: "d/m/yyyy" ปี พ.ศ. เช่น "22/3/2568"
+        // 3. หาข้อมูล daily ที่สอดคล้อง ณ วันตัวแทนของแต่ละเดือน
+        if (startD && endD) {
+          const milestoneDates: Date[] = [];
+          const cur = new Date(startD);
+          const endLimit = new Date(endD);
+
+          while (cur <= endLimit) {
+            milestoneDates.push(new Date(cur));
+            cur.setMonth(cur.getMonth() + 1);
+          }
+          // Make sure the end date is included
+          if (milestoneDates.length === 0 || milestoneDates[milestoneDates.length - 1].getTime() !== endLimit.getTime()) {
+            if (milestoneDates.length > 0) {
+              const lastMile = milestoneDates[milestoneDates.length - 1];
+              if (lastMile.getMonth() !== endLimit.getMonth() || lastMile.getFullYear() !== endLimit.getFullYear()) {
+                milestoneDates.push(new Date(endLimit));
+              }
+            } else {
+              milestoneDates.push(new Date(endLimit));
+            }
+          }
+
+          milestoneDates.forEach((mileDate) => {
+            let planUpToDate = 0;
+            let actualUpToDate = 0;
+            let actualDetected = false;
+
+            for (const item of sortedDaily) {
+              const itemDate = parseThaiDate(item.date);
+              if (itemDate && itemDate.getTime() <= mileDate.getTime()) {
+                const pVal = parseValToDecimal(item.plan) * scaleMultiplier;
+                const aVal = parseValToDecimal(item.actual) * scaleMultiplier;
+                planUpToDate += pVal;
+                actualUpToDate += aVal;
+                if (item.actual !== undefined && item.actual !== null && String(item.actual).trim() !== "") {
+                  actualDetected = true;
+                }
+              }
+            }
+
+            const day = mileDate.getDate();
+            const month = mileDate.getMonth() + 1;
+            const yearThai = mileDate.getFullYear() + 543;
+            const labelStr = `${day}/${month}/${yearThai}`;
+
+            labels.push(labelStr);
+            planCumulative.push(Number(planUpToDate.toFixed(2)));
+            // Clamp cumulative percentages to 100% max as safety / standard S-Curve
+            actualCumulative.push(actualDetected ? Number(Math.min(100, actualUpToDate).toFixed(2)) : null);
+          });
+        }
+      } else {
+        // --- WEEKLY MODE ---
+        // Group daily list into 7-day chunks (weeks)
+        const totalWeeks = Math.ceil(sortedDaily.length / 7);
+        const shouldSkipLabels = totalWeeks > 12;
+
+        for (let i = 0; i < sortedDaily.length; i++) {
+          const item = sortedDaily[i];
+          const pVal = parseValToDecimal(item.plan) * scaleMultiplier;
+          const aVal = parseValToDecimal(item.actual) * scaleMultiplier;
+
+          runningPlan += pVal;
+          runningActual += aVal;
+
+          if (item.actual !== undefined && item.actual !== null && String(item.actual).trim() !== "") {
+            hasActualStarted = true;
+          }
+
+          const isEndOfWeek = (i % 7 === 6) || (i === sortedDaily.length - 1);
+          if (isEndOfWeek) {
+            const weekNum = Math.floor(i / 7) + 1;
+            const labelText = `W${weekNum}`;
+            if (shouldSkipLabels) {
+              if (weekNum % 2 === 1 || weekNum === totalWeeks) {
+                labels.push(labelText);
+              } else {
+                labels.push("");
+              }
+            } else {
+              labels.push(labelText);
+            }
+
+            planCumulative.push(Number(Math.min(100, runningPlan).toFixed(2)));
+            actualCumulative.push(hasActualStarted ? Number(Math.min(100, runningActual).toFixed(2)) : null);
+          }
+        }
+      }
+
+      return {
+        labels,
+        datasets: [
+          {
+            label: 'Plan Cumulative (%)',
+            data: planCumulative,
+            borderColor: 'rgba(34, 211, 238, 0.8)',
+            backgroundColor: 'rgba(34, 211, 238, 0.1)',
+            borderWidth: 2.5,
+            tension: 0.3,
+            fill: true,
+            pointRadius: sCurveMode === 'weekly' ? 0 : 4,
+            pointHoverRadius: 6,
+            pointHoverBackgroundColor: '#FFFFFF',
+            pointHitRadius: 15,
+          },
+          {
+            label: 'Actual Cumulative (%)',
+            data: actualCumulative,
+            borderColor: 'rgba(244, 63, 94, 1)',
+            backgroundColor: 'transparent',
+            borderWidth: 3,
+            tension: 0.3,
+            pointRadius: sCurveMode === 'weekly' ? 0 : 4,
+            pointBackgroundColor: 'rgba(244, 63, 94, 1)',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 1.5,
+            pointHoverRadius: 6,
+            pointHoverBackgroundColor: '#FFFFFF',
+            pointHitRadius: 15,
+            spanGaps: false
+          }
+        ]
+      };
+    }
+
+    if (sCurveJsonData && sCurveJsonData.length > 0) {
+      const labels: string[] = [];
+      const planCumulative: number[] = [];
+      const actualCumulative: (number | null)[] = [];
+
+      for (let i = 0; i < sCurveJsonData.length; i++) {
+        const item = sCurveJsonData[i];
+        if (!item) continue;
+        const labelVal = (item.Label || item.Period || item.Month || item.Date || item.name || item.label || item.month || item.period || "").toString().trim();
+        const planRaw = item.Plan !== undefined ? item.Plan : (item.PlanPct !== undefined ? item.PlanPct : (item.PlanPercent !== undefined ? item.PlanPercent : item.plan));
+        const actualRaw = item.Actual !== undefined ? item.Actual : (item.ActualPct !== undefined ? item.ActualPct : (item.ActualPercent !== undefined ? item.ActualPercent : item.actual));
+
+        if (!labelVal && planRaw === undefined && actualRaw === undefined) {
+          continue;
+        }
+
+        if (sCurveMode === 'weekly') {
+          const totalPoints = sCurveJsonData.length;
+          const shouldSkipLabels = totalPoints > 12;
+          const weekNum = i + 1;
+          const labelText = `W${weekNum}`;
+          if (shouldSkipLabels) {
+            if (weekNum % 2 === 1 || i === sCurveJsonData.length - 1) {
+              labels.push(labelText);
+            } else {
+              labels.push("");
+            }
+          } else {
+            labels.push(labelText);
+          }
+        } else {
+          labels.push(labelVal);
+        }
+
+        let planVal = 0;
+        if (planRaw !== undefined && planRaw !== null && planRaw.toString().trim() !== '') {
+          const valStr = planRaw.toString().replace(/[^0-9.-]+/g, "").trim();
+          const parsed = parseFloat(valStr);
+          planVal = isNaN(parsed) ? 0 : parsed;
+        }
+        planCumulative.push(Number(planVal.toFixed(2)));
+
+        let actualVal: number | null = null;
+        if (actualRaw !== undefined && actualRaw !== null && actualRaw.toString().trim() !== '') {
+          const valStr = actualRaw.toString().replace(/[^0-9.-]+/g, "").trim();
+          const parsed = parseFloat(valStr);
+          actualVal = isNaN(parsed) ? null : Number(parsed.toFixed(2));
+        }
+        actualCumulative.push(actualVal);
+      }
+
+      return {
+        labels,
+        datasets: [
+          {
+            label: 'Plan Cumulative (%)',
+            data: planCumulative,
+            borderColor: 'rgba(34, 211, 238, 0.8)',
+            backgroundColor: 'rgba(34, 211, 238, 0.1)',
+            borderWidth: 2.5,
+            tension: 0.3,
+            fill: true,
+            pointRadius: sCurveMode === 'weekly' ? 0 : 4,
+            pointHoverRadius: 6,
+            pointHoverBackgroundColor: '#FFFFFF',
+            pointHitRadius: 15,
+          },
+          {
+            label: 'Actual Cumulative (%)',
+            data: actualCumulative,
+            borderColor: 'rgba(244, 63, 94, 1)',
+            backgroundColor: 'transparent',
+            borderWidth: 3,
+            tension: 0.3,
+            pointRadius: sCurveMode === 'weekly' ? 0 : 4,
+            pointBackgroundColor: 'rgba(244, 63, 94, 1)',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 1.5,
+            pointHoverRadius: 6,
+            pointHoverBackgroundColor: '#FFFFFF',
+            pointHitRadius: 15,
+            spanGaps: false
+          }
+        ]
+      };
+    }
+
+    if (!sCurveRawRows || sCurveRawRows.length <= 1) return null;
 
     const labels: string[] = [];
     const planCumulative: number[] = [];
     const actualCumulative: (number | null)[] = [];
 
-    // Skip the first 2 header rows (index 2 corresponds to the 3rd row)
-    for (let i = 2; i < sCurveRawRows.length; i++) {
-      const row = sCurveRawRows[i];
+    let startIdx = 2;
+    for (let i = 0; i < Math.min(5, sCurveRawRows.length); i++) {
+       const row = sCurveRawRows[i];
+       if (!row || row.length < 4) continue;
+       const col2 = row[2]?.toString().trim() || "";
+       const col3 = row[3]?.toString().replace(/[^0-9.-]+/g, "").trim();
+       const col4 = row[4]?.toString().replace(/[^0-9.-]+/g, "").trim();
+       
+       const isCol3Num = col3 && !isNaN(parseFloat(col3)) && isFinite(Number(col3));
+       const isCol4Num = col4 && !isNaN(parseFloat(col4)) && isFinite(Number(col4));
+       const isHeader = col2.includes("เดือน") || col2.includes("Period") || row[3]?.toString().includes("แผน") || row[4]?.toString().includes("จริง");
+
+       if ((isCol3Num || isCol4Num) && !isHeader) {
+          startIdx = i;
+          break;
+       }
+    }
+
+    const dataRows = sCurveRawRows.slice(startIdx);
+    for (let i = 0; i < dataRows.length; i++) {
+      const row = dataRows[i];
       if (!row || row.length < 3) continue;
 
-      // แกน X (Labels): ให้ดึงข้อมูลจากคอลัมน์ C (Index 2 - เดือน/ปี)
       const labelVal = row[2]?.toString().trim() || "";
       const planRaw = row[3];
       const actualRaw = row[4];
@@ -575,21 +1364,35 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
         continue;
       }
 
-      labels.push(labelVal);
+      if (sCurveMode === 'weekly') {
+        const totalPoints = dataRows.length;
+        const shouldSkipLabels = totalPoints > 12;
+        const weekNum = i + 1;
+        const labelText = `W${weekNum}`;
+        if (shouldSkipLabels) {
+          if (weekNum % 2 === 1 || i === dataRows.length - 1) {
+            labels.push(labelText);
+          } else {
+            labels.push("");
+          }
+        } else {
+          labels.push(labelText);
+        }
+      } else {
+        labels.push(labelVal);
+      }
 
-      // Clean and parse Plan Data
       let planVal = 0;
       if (planRaw !== undefined && planRaw !== null && planRaw.toString().trim() !== '') {
-        const valStr = planRaw.toString().replace('%', '').trim();
+        const valStr = planRaw.toString().replace(/[^0-9.-]+/g, "").trim();
         const parsed = parseFloat(valStr);
         planVal = isNaN(parsed) ? 0 : parsed;
       }
       planCumulative.push(Number(planVal.toFixed(2)));
 
-      // Clean and parse Actual Data
       let actualVal: number | null = null;
       if (actualRaw !== undefined && actualRaw !== null && actualRaw.toString().trim() !== '') {
-        const valStr = actualRaw.toString().replace('%', '').trim();
+        const valStr = actualRaw.toString().replace(/[^0-9.-]+/g, "").trim();
         const parsed = parseFloat(valStr);
         actualVal = isNaN(parsed) ? null : Number(parsed.toFixed(2));
       }
@@ -604,10 +1407,10 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
           data: planCumulative,
           borderColor: 'rgba(34, 211, 238, 0.8)',
           backgroundColor: 'rgba(34, 211, 238, 0.1)',
-          borderWidth: 3,
-          tension: 0.4,
+          borderWidth: 2.5,
+          tension: 0.3,
           fill: true,
-          pointRadius: 0,
+          pointRadius: sCurveMode === 'weekly' ? 0 : 4,
           pointHoverRadius: 6,
           pointHoverBackgroundColor: '#FFFFFF',
           pointHitRadius: 15,
@@ -617,12 +1420,12 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
           data: actualCumulative,
           borderColor: 'rgba(244, 63, 94, 1)',
           backgroundColor: 'transparent',
-          borderWidth: 4,
-          tension: 0.4,
-          pointRadius: 0,
+          borderWidth: 3,
+          tension: 0.3,
+          pointRadius: sCurveMode === 'weekly' ? 0 : 4,
           pointBackgroundColor: 'rgba(244, 63, 94, 1)',
           pointBorderColor: '#fff',
-          pointBorderWidth: 2,
+          pointBorderWidth: 1.5,
           pointHoverRadius: 6,
           pointHoverBackgroundColor: '#FFFFFF',
           pointHitRadius: 15,
@@ -630,12 +1433,11 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
         }
       ]
     };
-  }, [sCurveRawRows, sCurveMode]);
+  }, [sCurveRawRows, sCurveJsonData, sCurveMode, apiData]);
 
   const sCurveOptions = {
     responsive: true,
-    maintainAspectRatio: true,
-    aspectRatio: 2.5,
+    maintainAspectRatio: false,
     plugins: {
       legend: {
         position: 'top' as const,
@@ -667,8 +1469,7 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
           color: '#64748b', 
           font: { size: 9 }, 
           padding: 10,
-          autoSkip: true,
-          maxTicksLimit: 20,
+          autoSkip: false,
           maxRotation: 45,
           minRotation: 45
         }
@@ -809,25 +1610,15 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
     { title: 'ข้อมูลโครงการ', icon: <FileText className="w-6 h-6 text-brand-blue" />, desc: 'ข้อมูลทั่วไปและรายละเอียดสัญญา', action: 'จัดเก็บข้อมูล', onClick: () => setShowProjectInfo(true) },
     { title: 'สถานะทีมงาน', icon: <Users className="w-6 h-6 text-indigo-600" />, desc: 'จัดการสมาชิกและสิทธิ์การเข้าถึง', action: 'จัดการทีม', onClick: () => setShowTeamModal(true) },
     { 
-      title: 'แผนงาน (Gantt)', 
+      title: 'แผนงาน (Gantt) + S curve', 
       icon: <Calendar className="w-6 h-6 text-brand-blue" />, 
       desc: 'ระบบวางแผนงานโครงการ (Gantt Chart)', 
       action: project.editUrl ? 'จัดการแผนงาน' : 'กรุณาตั้งค่าลิงก์แก้ไข', 
       href: project.editUrl,
       onClick: !project.editUrl ? () => alert('กรุณาใส่ลิงก์แก้ไขไฟล์ในตั้งค่าโครงการ') : undefined
-    },
-    { 
-      title: 'S-Curve (Progress Chart)', 
-      icon: <LineChart className="w-6 h-6 text-emerald-500" />, 
-      desc: 'ติดตามความก้าวหน้าโครงการด้วยกราฟ S-Curve', 
-      action: project.editUrl ? 'ดูกราฟความก้าวหน้า' : 'กรุณาตั้งค่าลิงก์แก้ไข', 
-      href: project.editUrl,
-      onClick: !project.editUrl ? () => alert('กรุณาใส่ลิงก์แก้ไขไฟล์ในตั้งค่าโครงการ') : undefined
-    },
+    }
   ];
 
-  const progress = externalProgress !== null ? externalProgress : (project.progress || 0);
-  const budget = externalBudget !== null ? externalBudget : (project.budget || 0);
   const displayStartDate = summaryData.startDate !== '-' ? summaryData.startDate : (project.startDate || '-');
   const displayEndDate = summaryData.endDate !== '-' ? summaryData.endDate : (project.endDate || '-');
 
@@ -957,83 +1748,113 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
 
       {/* Top Panel: Summary */}
       <div className="w-full mb-12">
-        <div className="bg-slate-900 border border-white/5 rounded-[40px] p-8 lg:p-16 shadow-2xl relative overflow-hidden transition-all hover:border-white/10">
+        <div className="bg-slate-900 border border-white/5 rounded-[40px] p-8 lg:p-12 shadow-2xl relative overflow-hidden transition-all hover:border-white/10">
           <div className="absolute top-0 right-0 p-12 opacity-[0.03] pointer-events-none">
             <HardHat className="w-72 h-72 text-white" />
           </div>
           
-          <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start gap-16 lg:gap-24">
-            {/* Left Side: Text Details */}
-            <div className="flex-1 w-full lg:max-w-xl">
-              <div className="space-y-12">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-12 sm:gap-x-16 sm:gap-y-12">
-                  <InfoItem label="ชื่อโครงการ" value={project.name} />
-                  <InfoItem label="ผู้รับจ้าง" value={project.contractor || 'ไม่ระบุ'} />
-                  <InfoItem label="สถานที่ก่อสร้าง" value={project.location || 'ไม่ระบุ'} />
-                  <div className="relative group w-fit">
-                    <InfoItem label="งบประมาณงานโครงการ" value={`${Number(budget || 0).toLocaleString()} THB`} highlight />
-                    {externalBudget !== null && (
-                      <div className="absolute -top-3 -right-4 px-2.5 py-1 bg-emerald-500 rounded-lg text-[9px] font-light text-white uppercase opacity-0 group-hover:opacity-100 transition-all transform translate-y-1 group-hover:translate-y-0 shadow-lg shadow-emerald-500/20 whitespace-nowrap z-20">Live Sheet Value</div>
-                    )}
-                  </div>
+          <div className="relative z-10 w-full space-y-8">
+            {/* Header: Status and Title */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-white/5 pb-6">
+              <div>
+                <div className="text-xl font-light text-white uppercase tracking-tight flex items-center gap-2">
+                  <div className="w-1.5 h-6 bg-cyan-400 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
+                  การวิเคราะห์ความก้าวหน้าโครงการสะสม
                 </div>
+                <p className="text-[10px] font-normal text-slate-500 uppercase tracking-tight ml-3.5">
+                  CUMULATIVE PROJECT PROGRESS & TIMELINE ANALYSIS
+                </p>
+              </div>
+              <div className="px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full text-xs font-light w-fit flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                <span>ระบบเชื่อมต่อเชื่อมโยงข้อมูลปกติ</span>
               </div>
             </div>
 
-            {/* Right Side: Progress Analysis */}
-            <div className="flex-1 w-full lg:max-w-2xl border-l border-white/5 pl-0 lg:pl-20">
-              <div className="space-y-12">
-                <div className="space-y-6">
-                  <div className="flex flex-col gap-8">
-                    <div className="px-6 py-2 bg-white/5 rounded-2xl border border-white/10 w-fit">
-                      <span className="text-[10px] font-normal text-cyan-400 uppercase tracking-tight">ระบบเชื่อมต่อปกติ</span>
+            {/* Two Main Cards Grid - styled beautifully like Dashboard summary cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Actual Progress Card */}
+              <motion.div 
+                whileHover={{ y: -3, transition: { duration: 0.2, ease: "easeOut" } }}
+                className="bg-slate-950/45 border border-white/5 p-6 rounded-[32px] transition-all relative overflow-hidden group hover:border-white/10 flex flex-col justify-between min-h-[180px]"
+              >
+                <div className="absolute -top-10 -right-10 w-36 h-36 bg-white/5 rounded-full blur-[60px] group-hover:bg-white/10 transition-all" />
+                <div className="relative z-10 flex-1 flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm font-normal text-slate-300 uppercase tracking-tight block">ผลงานรวมทั้งหมด (Actual)</span>
+                      <p className="text-[10px] font-light text-slate-500 uppercase tracking-widest mt-0.5">REAL-TIME COMPLETION INDEX</p>
+                    </div>
+                    <div className="flex items-center gap-2 py-1 px-3 bg-white/5 rounded-full border border-white/10 transition-opacity">
+                      <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.5)]" />
+                      <span className="text-[10px] font-normal text-slate-300 uppercase tracking-wider">ผลงานจริงสะสม</span>
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-8">
-                    <div className="flex flex-col items-center justify-center gap-2 p-6 lg:p-8 bg-white/[0.02] rounded-[32px] border border-white/5 transition-all hover:bg-white/5 group w-full min-w-[160px]">
-                      <span className="text-sm font-normal text-slate-200 uppercase tracking-tight opacity-80 text-center">ผลงานรวมทั้งหมด (Actual)</span>
-                      <div className="flex items-center gap-2 py-1 px-3 bg-white/5 rounded-full border border-white/10 opacity-70 group-hover:opacity-100 transition-opacity">
-                        <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.5)]" />
-                        <span className="text-[10px] font-normal text-slate-300 uppercase tracking-[0.1em]">ผลงานจริงสะสม</span>
-                      </div>
-                      <span className="text-4xl lg:text-5xl font-light text-white leading-none drop-shadow-[0_0_20px_rgba(255,255,255,0.2)] whitespace-nowrap mt-2">
-                        {progress.toFixed(2)}%
-                      </span>
-                    </div>
-                    <div className="flex flex-col items-center justify-center gap-2 p-6 lg:p-8 bg-cyan-500/[0.02] rounded-[32px] border border-cyan-500/10 transition-all hover:bg-cyan-500/5 group w-full min-w-[160px]">
-                      <span className="text-sm font-normal text-cyan-400/80 uppercase tracking-tight text-center">แผนงานรวมทั้งหมด (Plan)</span>
-                      <div className="flex items-center gap-2 py-1 px-3 bg-cyan-500/10 rounded-full border border-cyan-500/10 opacity-70 group-hover:opacity-100 transition-opacity">
-                        <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
-                        <span className="text-[10px] font-normal text-cyan-300 uppercase tracking-[0.1em]">แผนงานสะสม</span>
-                      </div>
-                      <span className="text-4xl lg:text-5xl font-light text-cyan-400 leading-none drop-shadow-[0_0_20px_rgba(6,182,212,0.2)] whitespace-nowrap mt-2">
-                        {(externalPlanProgress || 0).toFixed(2)}%
-                      </span>
-                    </div>
+                  <div className="mt-6 flex items-baseline gap-2">
+                    <span className="text-5xl lg:text-6xl font-light text-white leading-none drop-shadow-[0_0_20px_rgba(255,255,255,0.25)]">
+                      {progress.toFixed(2)}%
+                    </span>
+                    <span className="text-xs text-slate-500 uppercase tracking-widest">ของสัญญา</span>
                   </div>
                 </div>
+              </motion.div>
 
-                <div className="space-y-8">
-                  <div className="relative h-6 bg-slate-950 rounded-full overflow-hidden border border-white/10 p-1.5 shadow-[inset_0_2px_15px_rgba(0,0,0,0.6)]">
-                    {/* Plan Progress Track (Subtle but improved contrast) */}
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${externalPlanProgress || 0}%` }}
-                      className="absolute h-full bg-cyan-400/40 left-0 top-0 transition-all rounded-r-none"
-                    />
-                    {/* Actual Progress Track (Prominent) */}
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${progress}%` }}
-                      className="h-full bg-gradient-to-r from-slate-200 to-white rounded-full shadow-[0_0_40px_rgba(255,255,255,0.6)] transition-all relative z-10"
-                    />
+              {/* Plan Progress Card */}
+              <motion.div 
+                whileHover={{ y: -3, transition: { duration: 0.2, ease: "easeOut" } }}
+                className="bg-cyan-500/[0.01] border border-cyan-500/10 p-6 rounded-[32px] transition-all relative overflow-hidden group hover:border-cyan-500/30 flex flex-col justify-between min-h-[180px]"
+              >
+                <div className="absolute -top-10 -right-10 w-36 h-36 bg-cyan-500/5 rounded-full blur-[60px] group-hover:bg-cyan-500/10 transition-all" />
+                <div className="relative z-10 flex-1 flex flex-col justify-between">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm font-normal text-cyan-400 uppercase tracking-tight block">แผนงานรวมทั้งหมด (Plan)</span>
+                      <p className="text-[10px] font-light text-cyan-500/50 uppercase tracking-widest mt-0.5">SCHEDULED TARGET PROGRESS</p>
+                    </div>
+                    <div className="flex items-center gap-2 py-1 px-3 bg-cyan-500/10 rounded-full border border-cyan-500/20 transition-opacity">
+                      <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
+                      <span className="text-[10px] font-normal text-cyan-300 uppercase tracking-wider">แผนงานสะสม</span>
+                    </div>
                   </div>
+                  
+                  <div className="mt-6 flex items-baseline gap-2">
+                    <span className="text-5xl lg:text-6xl font-light text-cyan-400 leading-none drop-shadow-[0_0_20px_rgba(34,211,238,0.25)]">
+                      {(externalPlanProgress || 0).toFixed(2)}%
+                    </span>
+                    <span className="text-xs text-cyan-500/55 uppercase tracking-widest">ตามเป้าหมาย</span>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
 
-                  <div className="flex justify-between items-center text-[12px] font-light text-slate-200 uppercase tracking-tight px-2">
-                    <span className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-slate-800" /> เริ่มสัญญา: {displayStartDate}</span>
-                    <span className="text-slate-200">สิ้นสุดสัญญา: {displayEndDate}</span>
-                  </div>
+            {/* Progress Bar and Dates Grid */}
+            <div className="pt-6 border-t border-white/5 space-y-6">
+              <div className="relative h-7 bg-slate-950 rounded-full overflow-hidden border border-white/10 p-1.5 shadow-[inset_0_2px_15px_rgba(0,0,0,0.6)]">
+                {/* Plan Progress Track (Subtle but improved contrast) */}
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${externalPlanProgress || 0}%` }}
+                  className="absolute h-full bg-cyan-400/30 left-0 top-0 transition-all rounded-r-none"
+                />
+                {/* Actual Progress Track (Prominent) */}
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progress}%` }}
+                  className="h-full bg-gradient-to-r from-slate-200 to-white rounded-full shadow-[0_0_40px_rgba(255,255,255,0.6)] transition-all relative z-10"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-light text-slate-300 tracking-wide">
+                <div className="flex items-center gap-3 bg-white/[0.02] border border-white/5 rounded-2xl py-3 px-4 hover:border-white/10 transition-colors">
+                  <div className="w-2 h-2 rounded-full bg-slate-600 shadow-[0_0_6px_rgba(100,116,139,0.5)]" />
+                  <span className="text-slate-400">วันเริ่มต้นสัญญา:</span>
+                  <span className="font-mono text-white text-sm font-light">{displayStartDate}</span>
+                </div>
+                <div className="flex items-center gap-3 bg-white/[0.02] border border-white/5 rounded-2xl py-3 px-4 hover:border-white/10 transition-colors sm:justify-end">
+                  <div className="w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.5)]" />
+                  <span className="text-slate-400">วันสิ้นสุดสัญญา:</span>
+                  <span className="font-mono text-white text-sm font-light">{displayEndDate}</span>
                 </div>
               </div>
             </div>
@@ -1041,254 +1862,352 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
         </div>
       </div>
 
-      <div id="executive-summary" className="mb-16 space-y-12 mt-4">
-        <div className="flex items-center justify-between border-b border-white/5 pb-10">
-          <div className="flex items-center gap-6">
-            <div className="p-6 bg-brand-blue/5 rounded-[32px] border border-brand-blue/10 shadow-2xl">
-              <Monitor className="w-10 h-10 text-brand-blue" />
+        {project.apiUrl ? (
+          fetchError && !lastSync ? (
+            <div className="text-center p-12 bg-slate-900 border border-rose-500/20 rounded-[40px] max-w-7xl mx-auto my-6 shadow-lg shadow-rose-950/20">
+              <div className="inline-flex items-center justify-center p-4 bg-rose-500/10 rounded-full border border-rose-500/30 text-rose-400 mb-4 animate-pulse">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h4 className="text-lg font-normal text-white mb-2">เชื่อมต่อข้อมูลไม่สำเร็จ</h4>
+              <p className="text-rose-400 text-sm max-w-md mx-auto">{fetchError}</p>
             </div>
-            <div>
-              <h3 className="text-4xl font-light text-white tracking-tight uppercase">Dashboard สรุปภาพรวมโครงการ</h3>
-              <p className="text-xs text-slate-200 font-normal uppercase tracking-tight mt-2">Executive Summary Data Visualization</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-6">
-            {dashMonthOptions.length > 0 && (
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] font-normal text-slate-400 uppercase tracking-tight">เลือกเดือน:</span>
-                <div className="relative">
-                  <select 
-                    value={selectedDashMonth}
-                    onChange={(e) => setSelectedDashMonth(e.target.value)}
-                    className="bg-slate-800 border border-white/10 rounded-xl px-4 py-2.5 text-xs font-light text-white outline-none focus:ring-1 focus:ring-brand-blue/30 appearance-none pr-10 cursor-pointer min-w-[160px]"
-                  >
-                    {dashMonthOptions.map(opt => (
-                      <option key={opt.key} value={opt.key}>{opt.label}</option>
-                    ))}
-                  </select>
-                  <ChevronRight className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2 rotate-90 pointer-events-none" />
+          ) : isSyncing && !lastSync ? (
+            <div className="w-full space-y-6 max-w-7xl mx-auto mb-6 animate-pulse">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <div className="h-6 w-64 bg-slate-800 rounded mb-2"></div>
+                  <div className="h-4 w-48 bg-slate-800 rounded"></div>
                 </div>
+                <div className="h-8 w-40 bg-slate-800 rounded-2xl"></div>
               </div>
-            )}
-
-            {lastSync && !isSyncing && project.apiUrl && !fetchError && (
-              <div className="flex items-center gap-4 px-6 py-4 bg-slate-800/40 backdrop-blur-md rounded-2xl border border-white/5 text-xs font-normal text-slate-300 uppercase tracking-tight">
-                <div className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]'}`} />
-                {isSyncing ? 'กำลังซิงค์...' : `อัปเดตล่าสุด: ${lastSync.toLocaleTimeString()}`}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 lg:gap-6 w-full">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="bg-slate-900/50 border border-white/5 rounded-[32px] p-6 h-56 flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="h-4 w-32 bg-slate-800 rounded"></div>
+                      <div className="h-8 w-48 bg-slate-800 rounded"></div>
+                    </div>
+                    <div className="pt-4 border-t border-white/5 flex gap-4">
+                      <div className="h-4 w-20 bg-slate-800 rounded"></div>
+                      <div className="h-4 w-20 bg-slate-800 rounded flex-1 bg-slate-800/50"></div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
-          {fetchError && (
-            <div className="flex items-center gap-3 px-5 py-2.5 bg-rose-500/10 backdrop-blur-md rounded-2xl border border-rose-500/20 text-sm font-black text-rose-400 uppercase">
-              <AlertCircle className="w-4 h-4" />
-              {fetchError}
-              <button 
-                onClick={() => fetchExternalData()}
-                className="ml-2 underline hover:text-white transition-colors"
-              >
-                TRY AGAIN
-              </button>
             </div>
-          )}
-          {!project.apiUrl && (
-            <div className="flex items-center gap-3 px-5 py-2.5 bg-rose-500/10 backdrop-blur-md rounded-2xl border border-rose-500/20 text-sm font-semibold text-rose-400 uppercase animate-pulse">
-              <AlertCircle className="w-4 h-4" />
-              กรุณาเชื่อมต่อ API Web App URL
-            </div>
-          )}
-        </div>
+          ) : (
+            <div className="w-full space-y-6 max-w-7xl mx-auto mb-6">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <div className="text-xl font-light text-white uppercase tracking-tight flex items-center gap-2">
+                    <div className="w-1.5 h-6 bg-cyan-400 rounded-full shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
+                    DASHBOARD สรุปภาพรวมโครงการ
+                  </div>
+                  <p className="text-[10px] font-normal text-slate-500 uppercase tracking-tight ml-3.5">EXECUTIVE SUMMARY DATA VISUALIZATION</p>
+                </div>
+                 <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                   {dashMonthOptions.length > 0 && (
+                     <div className="flex items-center gap-1.5 bg-slate-950/85 border border-white/10 rounded-2xl px-3.5 py-2 text-xs font-light shadow-inner text-slate-100 transition-colors hover:border-white/20">
+                       <span className="text-slate-400">ประจำงวด:</span>
+                       <select
+                         value={selectedDashMonth}
+                         onChange={(e) => setSelectedDashMonth(e.target.value)}
+                         className="bg-transparent border-0 focus:ring-0 text-white font-sans font-bold cursor-pointer outline-none text-xs p-0 select-none"
+                         style={{ outline: "none", border: "none" }}
+                       >
+                         {dashMonthOptions.map(opt => (
+                           <option key={opt.key} value={opt.key} className="bg-slate-950 text-white font-sans text-xs">
+                             {opt.label}
+                           </option>
+                         ))}
+                       </select>
+                     </div>
+                   )}
+                   <div className="flex items-center gap-2 px-4 py-2.5 bg-white/5 rounded-2xl border border-white/10 text-xs text-slate-300">
+                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                     <span>อัปเดตล่าสุด: {lastSync ? lastSync.toLocaleTimeString("en-US", { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true }) : new Date().toLocaleTimeString("en-US", { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true })}</span>
+                   </div>
+                 </div>
+              </div>
 
-        {!project.apiUrl ? (
-          <div className="bg-slate-800/50 backdrop-blur-xl border border-dashed border-white/10 rounded-[40px] p-20 flex flex-col items-center justify-center text-center gap-6 group hover:border-brand-blue/30 transition-all">
-             <div className="p-8 bg-brand-blue/5 rounded-full border border-brand-blue/10 group-hover:scale-110 transition-transform">
-               <RefreshCw className="w-16 h-16 text-brand-blue opacity-50" />
-             </div>
-             <div>
-               <h4 className="text-2xl font-black text-white uppercase tracking-tight">Database Not Connected</h4>
-               <p className="text-slate-500 font-bold max-w-md mt-2">
-                 โครงการนี้ยังไม่ได้เชื่อมต่อกับ API Web App URL (JSON) กรุณาแก้ไขข้อมูลโครงการเพื่อใส่ลิงก์ข้อมูล
-               </p>
-             </div>
-             <motion.button 
-               whileHover={{ scale: 1.05 }}
-               whileTap={{ scale: 0.95 }}
-               onClick={() => setShowProjectInfo(true)}
-               className="mt-4 px-8 py-4 bg-brand-blue text-white rounded-2xl font-black uppercase text-sm shadow-2xl shadow-brand-blue/40"
-             >
-               เชื่อมต่อฐานข้อมูลเดี๋ยวนี้
-             </motion.button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-10 lg:gap-14">
-            {/* Conditional Color Logic for Monthly Performance */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6 w-full">
+            {/* Custom high-fidelity summary metrics layout directly aligned with the Google Sheets report */}
             {(() => {
-              const planMonthStr = dashboardData ? dashboardData.monthlyPlan : summaryData.planMonthly;
-              const actualMonthStr = dashboardData ? dashboardData.monthlyActual : summaryData.actualMonthly;
-              
-              // Parses the absolute currency value in Baht (extracting from ฿... format) for precise mathematical cash comparison
-              const parseBahtAmount = (str: string | undefined | null) => {
-                if (!str) return 0;
-                const match = str.match(/฿\s?([0-9,.]+)/);
-                if (match && match[1]) {
-                  const num = parseFloat(match[1].replace(/,/g, ''));
-                  return isNaN(num) ? 0 : num;
-                }
-                const num = parseFloat(str.replace(/[^\d.]/g, ''));
-                return isNaN(num) ? 0 : num;
-              };
+               const parseBahtAmount = (str: string | undefined | null) => {
+                 if (!str) return 0;
+                 const match = str.match(/฿\s?([0-9,.]+)/);
+                 if (match && match[1]) {
+                   const num = parseFloat(match[1].replace(/,/g, ''));
+                   return isNaN(num) ? 0 : num;
+                 }
+                 const num = parseFloat(str.replace(/[^\d.]/g, ''));
+                 return isNaN(num) ? 0 : num;
+               };
 
-              const planMonthVal = parseBahtAmount(planMonthStr);
-              const actualMonthVal = parseBahtAmount(actualMonthStr);
-              
-              const isTargetMet = actualMonthVal >= planMonthVal;
-              const actualColorClass = isTargetMet ? "text-green-400" : "text-rose-500";
-              const actualGlowClass = isTargetMet ? "drop-shadow-[0_0_20px_rgba(16,185,129,0.3)]" : "drop-shadow-[0_0_20px_rgba(244,63,94,0.3)]";
+               const planAmt = parseBahtAmount(dashboardData.monthlyPlan.amt);
+               const actualAmt = parseBahtAmount(dashboardData.monthlyActual.amt);
+               const isTargetMet = actualAmt >= planAmt;
 
-              return (
-                <>
-                  {/* Split row: Left is Cumulative Payment, Right is Monthly Liquidity */}
-                  <SummaryCard 
-                    title="สถานะงบประมาณสะสม"
-                    color="text-cyan-400"
-                    glow="bg-cyan-500/5"
-                    border="hover:border-cyan-500/30"
-                  >
-                    <div className="space-y-8">
-                      <div className="space-y-3">
-                        <span className="text-xl font-light text-slate-200 uppercase tracking-tight block">งบประมาณงานโครงการ</span>
-                        <p className="text-5xl font-light text-white tracking-tight leading-none group-hover:text-cyan-100 transition-colors">฿{dashboardData ? dashboardData.projectBudget : summaryData.projectBudget}</p>
-                      </div>
-                      <div className="pt-8 border-t border-white/5 space-y-3">
-                        <span className="text-xl font-light text-slate-200 uppercase tracking-tight block">ยอดเงินรวมรายรับ (CUMULATIVE INCOME)</span>
-                        <p className="text-5xl font-light text-cyan-400 drop-shadow-[0_0_20px_rgba(34,211,238,0.2)] tracking-tight leading-none">
-                          ฿{dashboardData ? dashboardData.cumulativePayment : summaryData.cumulativePayment}
-                        </p>
-                      </div>
-                    </div>
-                  </SummaryCard>
+               const actualColorClass = isTargetMet ? "text-green-400" : "text-rose-500";
+               const actualGlowClass = isTargetMet ? "drop-shadow-[0_0_15px_rgba(16,185,129,0.3)]" : "drop-shadow-[0_0_15px_rgba(244,63,94,0.3)]";
 
-                  <SummaryCard 
-                    title="สภาพคล่องรายเดือน"
-                    color={isTargetMet ? "text-green-400" : "text-rose-400"}
-                    glow={isTargetMet ? "bg-green-500/5" : "bg-rose-500/5"}
-                    border={isTargetMet ? "hover:border-green-500/30" : "hover:border-rose-500/30"}
-                  >
-                    <div className="space-y-8">
-                      <div className="space-y-3">
-                        <span className="text-xl font-light text-slate-200 uppercase tracking-tight block">ยอดเงินตามแผนงานเดือนนี้ (PLAN MONTHLY)</span>
-                        <p className="text-5xl font-light text-slate-100 tracking-tight leading-none">
-                          {dashboardData ? dashboardData.monthlyPlan : summaryData.planMonthly}
-                        </p>
+               const isNetNegative = dashboardData.netBalance.toString().includes('-');
+               const netColorClass = isNetNegative ? "text-rose-500" : "text-green-400";
+               const netGlowClass = isNetNegative ? "bg-rose-500/5" : "bg-green-500/5";
+               const netBorderClass = isNetNegative ? "hover:border-rose-500/30" : "hover:border-green-500/30";
+               const netTextGlowClass = isNetNegative ? "drop-shadow-[0_0_15px_rgba(244,63,94,0.4)]" : "drop-shadow-[0_0_15px_rgba(16,185,129,0.4)]";
+
+               const displayCellString = (val: string) => {
+                 if (!val) return "0.00";
+                 if (val.includes(',') || val.includes('(') || val.includes(')')) return val;
+                 const parsed = parseFloat(val);
+                 if (!isNaN(parsed)) {
+                   const isNeg = parsed < 0;
+                   const absVal = Math.abs(parsed);
+                   const formatted = absVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                   return isNeg ? `(${formatted})` : formatted;
+                 }
+                 return val;
+               };
+
+               return (
+                 <>
+                   {/* 1. Project Budget and Overall Progress Plan Map */}
+                   <SummaryCard 
+                     title="สถานะงบประมาณและแผนงานหลัก"
+                     color="text-cyan-400"
+                     glow="bg-cyan-500/5"
+                     border="hover:border-cyan-500/30"
+                   >
+                     <div className="space-y-4">
+                       <div>
+                         <span className="text-xs md:text-[13px] font-semibold text-slate-200 uppercase tracking-tight block">งบประมาณงานโครงการ</span>
+                         <p className="text-2xl md:text-3xl font-bold text-white tracking-tight leading-none mt-1">฿{dashboardData.projectBudget}</p>
+                       </div>
+                       
+                       <div className="pt-3.5 border-t border-white/5 space-y-3">
+                         <div>
+                           <span className="text-xs md:text-[13px] font-semibold text-slate-200 uppercase tracking-tight block">% แผนงานรวมทั้งหมด (Plan)</span>
+                           <div className="grid grid-cols-2 gap-2 mt-1.5 text-xs md:text-sm">
+                             <div className="text-slate-100 font-medium">ประจำงวด: <span className="font-bold text-cyan-400 font-mono">{dashboardData.overallPlan.monthly}</span></div>
+                             <div className="text-slate-100 font-medium">สะสมทั้งหมด: <span className="font-bold text-cyan-300 font-mono">{dashboardData.overallPlan.cumulative}</span></div>
+                           </div>
+                         </div>
+                         <div>
+                           <span className="text-xs md:text-[13px] font-semibold text-slate-200 uppercase tracking-tight block">% ความคืบหน้า (Actual)</span>
+                           <div className="grid grid-cols-2 gap-2 mt-1.5 text-xs md:text-sm">
+                             <div className="text-slate-100 font-medium">ประจำงวด: <span className="font-bold text-emerald-400 font-mono">{dashboardData.overallActual.monthly}</span></div>
+                             <div className="text-slate-100 font-medium">สะสมทั้งหมด: <span className="font-bold text-emerald-300 font-mono">{dashboardData.overallActual.cumulative}</span></div>
+                           </div>
+                         </div>
+                       </div>
+                     </div>
+                   </SummaryCard>
+
+                   {/* 2. Monthly Liquidity Operations */}
+                   <SummaryCard 
+                     title="สภาพคล่องการเบิกจ่ายประจำงวด"
+
+                     color={isTargetMet ? "text-green-400" : "text-rose-400"}
+                     glow={isTargetMet ? "bg-green-500/5" : "bg-rose-500/5"}
+                     border={isTargetMet ? "hover:border-green-500/30" : "hover:border-rose-500/30"}
+                   >
+                     <div className="space-y-5">
+                       <div>
+                         <span className="text-xs md:text-[13px] font-semibold text-slate-100 uppercase tracking-tight block font-semibold">แผนเบิกผลงานประจำเดือน (Plan)</span>
+                         <div className="flex items-baseline justify-between mt-2">
+                           <span className="text-xs md:text-sm font-semibold text-slate-200 font-mono">{dashboardData.monthlyPlan.pct}</span>
+                           <span className="text-lg md:text-xl font-bold text-white font-mono">฿{dashboardData.monthlyPlan.amt}</span>
+                         </div>
+                       </div>
+                       
+                       <div className="pt-3.5 border-t border-white/5">
+                         <span className="text-xs md:text-[13px] font-semibold text-slate-100 uppercase tracking-tight block font-semibold">ผลงานที่ทำได้จริงประจำเดือน (Actual)</span>
+                         <div className="flex items-baseline justify-between mt-2">
+                           <span className="text-xs md:text-sm font-bold text-emerald-300 font-mono">{dashboardData.monthlyActual.pct}</span>
+                           <span className={`text-xl md:text-2xl font-bold ${actualColorClass} ${actualGlowClass} font-mono`}>฿{dashboardData.monthlyActual.amt}</span>
+                         </div>
+                       </div>
+                     </div>
+                   </SummaryCard>
+
+                   {/* 3. Materials & Spending Deductions */}
+                   <SummaryCard 
+                     title="หักค่าใช้จ่ายประจำเดือน"
+                     color="text-amber-500"
+                     glow="bg-amber-500/5"
+                     border="hover:border-amber-500/30"
+                   >
+                     <div className="space-y-2.5 text-xs md:text-[13px] font-light">
+                        {!apiData ? (
+                          <div className="py-8 flex flex-col items-center justify-center space-y-2">
+                            <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                            <span className="text-slate-400 text-xs font-light">กำลังรอข้อมูลค่าใช้จ่าย...</span>
+                          </div>
+                        ) : (
+                          <>
+                       <div className="flex justify-between items-center px-1">
+                         <span className="text-slate-100 font-semibold text-[11px] md:text-xs">เหล็ก , คอนกรีต , I-Girder</span>
+                         <span className="font-mono text-slate-100 font-semibold">฿{displayCellString(dashboardData.steelConcreteGirder)}</span>
+                       </div>
+                       <div className="flex justify-between items-center px-1">
+                         <span className="text-slate-100 font-semibold text-[11px] md:text-xs">วัสดุอื่น ๆ</span>
+                         <span className="font-mono text-slate-100 font-semibold">฿{displayCellString(dashboardData.otherMaterials)}</span>
+                       </div>
+                       <div className="flex justify-between items-center px-1">
+                         <span className="text-amber-300 font-semibold text-[11px] md:text-xs">เพิ่ม Vat 7%</span>
+                         <span className="font-mono text-amber-300 font-semibold">฿{displayCellString(dashboardData.vat7)}</span>
+                       </div>
+                       <div className="flex justify-between items-center px-1">
+                         <span className="text-amber-300 font-semibold text-[11px] md:text-xs">หัก ณ ที่จ่าย 3%</span>
+                         <span className="font-mono text-amber-300 font-semibold">฿{displayCellString(dashboardData.withholdingTax3)}</span>
+                       </div>
+                       <div className="flex justify-between items-center px-1">
+                         <span className="text-amber-300 font-semibold text-[11px] md:text-xs">หักประกันผลงาน 10%</span>
+                         <span className="font-mono text-amber-300 font-semibold">฿{displayCellString(dashboardData.warrantyRetainage10)}</span>
+                       </div>
+                       <div className="pt-2.5 border-t border-white/5 flex flex-col px-1 w-full mt-2">
+                         <div className="flex justify-between items-center w-full">
+                           <span className="text-slate-200 font-medium text-[11px] md:text-xs uppercase">ยอดรวมหักใช้จ่าย</span>
+                           <span className="text-sm md:text-base font-semibold text-amber-400 font-mono">฿{dashboardData.monthlyDeduction}</span>
+                         </div>
+                         <span className="text-[10px] text-slate-300 font-light block leading-tight mt-1 text-left">
+                           หัก: Vat, ณ ที่จ่าย, ประกันผลงาน, ค่าวัสดุ
+                         </span>
+                       </div>
+                     </>
+                        )}
                       </div>
-                      <div className="pt-8 border-t border-white/5 space-y-3">
-                        <span className="text-xl font-light text-slate-200 uppercase tracking-tight block">ยอดเงินตามผลงานจริงเดือนนี้ (ACTUAL MONTHLY)</span>
-                        <p className={`text-5xl font-light ${actualColorClass} ${actualGlowClass} tracking-tight leading-none`}>
-                          {dashboardData ? dashboardData.monthlyActual : summaryData.actualMonthly}
-                        </p>
+                   </SummaryCard>
+
+                   {/* 4. Accounts Ledger & Remaining */}
+                   <SummaryCard 
+                     title="สถานะสรุปยอดคงเหลือ"
+                     color={netColorClass}
+                     glow={netGlowClass}
+                     border={netBorderClass}
+                   >
+                     <div className="space-y-4">
+                       {!apiData ? (
+                          <div className="py-12 flex flex-col items-center justify-center space-y-2">
+                            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                            <span className="text-slate-400 text-xs font-light">กำลังรอข้อมูลคงเหลือ...</span>
+                          </div>
+                        ) : (
+                          <><div className="flex justify-between items-center">
+                         <span className="text-xs md:text-[13px] font-semibold text-slate-200 uppercase tracking-tight">ยอดเงินเบิกสะสม (บาท)</span>
+                         <span className="text-sm md:text-base font-bold text-slate-100 font-mono">฿{dashboardData.cumulativePayment}</span>
+                       </div>
+                       <div className="flex justify-between items-center pt-2.5 border-t border-white/5">
+                         <span className="text-xs md:text-[13px] font-semibold text-slate-200 uppercase tracking-tight">ยอดเงินคงเหลือเบิก (บาท)</span>
+                         <span className="text-sm md:text-base font-bold text-slate-100 font-mono">฿{dashboardData.remainingPayment}</span>
+                       </div>
+                       <div className="pt-3 border-t border-white/10 space-y-1.5">
+                         <span className="text-xs md:text-[13px] font-semibold text-slate-200 uppercase tracking-tight block">คงเหลือค่างานหลังหักค่าใช้จ่าย</span>
+                         <p className={`text-2xl md:text-3xl font-semibold tracking-tight leading-none ${netColorClass} ${netTextGlowClass} font-mono mt-1`}>
+                           {dashboardData.netBalance.startsWith('-') ? `-฿${dashboardData.netBalance.substring(1)}` : `฿${dashboardData.netBalance}`}
+                         </p>
+                         <span className="text-[10px] md:text-xs text-slate-350 font-light block leading-tight mt-0.5">
+                           หัก: Vat, ณ ที่จ่าย, ประกันผลงาน, ค่าวัสดุ
+                         </span>
+                       </div>
+                       <div className="pt-3 border-t border-white/10 space-y-1.5">
+                         <span className="text-xs md:text-[13px] font-semibold text-slate-200 uppercase tracking-tight block">รวมค่างานสุทธิทุกเดือน (สะสม)</span>
+                         <p className="text-2xl md:text-3xl font-normal tracking-tight leading-none text-green-400 drop-shadow-[0_0_15px_rgba(16,185,129,0.4)] font-mono mt-1">
+                           {(() => {
+                             const val = String(dashboardData.netBalanceAllMonths || "0.00").trim();
+                             return val.startsWith('-') ? `-฿${val.substring(1)}` : `฿${val}`;
+                           })()}
+                         </p>
+                       </div>
+                     </>
+                        )}
                       </div>
-                    </div>
-                  </SummaryCard>
-                </>
-              );
-            })()}
+                   </SummaryCard>
+                 </>
+               );
+             })()}
+            </div>
+          </div>
+          )
+        ) : (
+          <div className="text-center p-12 bg-slate-900 border border-white/5 rounded-[40px] max-w-7xl mx-auto my-6">
+            <p className="text-slate-400">กรุณาตั้งค่า API URL เพื่อเปิดใช้งานวิเคราะห์และแสดงผลข้อมูลแดชบอร์ดโครงการสรุปรายเดือน</p>
           </div>
         )}
 
         {/* S-Curve Chart Section */}
         {project.apiUrl && sCurveData && (
           <motion.div 
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="w-full mt-10"
+            className="w-full mt-6"
           >
-            <div className="bg-slate-900 border border-white/5 rounded-[48px] p-10 lg:p-14 shadow-2xl relative overflow-hidden transition-all hover:border-white/10">
-              <div className="flex flex-col md:flex-row items-center justify-between mb-10 gap-6">
-                <div className="space-y-1">
-                  <h3 className="text-3xl font-light text-white tracking-tight uppercase flex items-center gap-4">
-                    <div className="w-1.5 h-8 bg-indigo-500 rounded-full shadow-[0_0_15px_rgba(99,102,241,0.5)]" />
+            <div className="bg-slate-900 border border-white/5 rounded-3xl p-6 lg:p-8 shadow-2xl relative overflow-hidden transition-all hover:border-white/10">
+              <div className="flex flex-col sm:flex-row items-center justify-between mb-4 gap-4">
+                <div className="space-y-0.5">
+                  <div className="text-lg font-light text-white tracking-tight uppercase flex items-center gap-2">
+                    <div className="w-1 h-6 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
                     กราฟความก้าวหน้าสะสม (S-Curve)
-                  </h3>
-                  <p className="text-xs font-normal text-slate-500 uppercase tracking-tight ml-5">Cumulative Progress Analysis Chart</p>
+                  </div>
+                  <p className="text-[10px] font-normal text-slate-500 uppercase tracking-tight ml-3">Cumulative Progress Analysis Chart</p>
                 </div>
-                <div className="flex flex-wrap items-center justify-center gap-6">
+                <div className="flex flex-wrap items-center justify-center gap-4">
                   {/* View Toggle Switch */}
-                  <div className="flex bg-slate-800/50 backdrop-blur-md p-1 rounded-2xl border border-white/10 shadow-lg">
+                  <div className="flex bg-slate-800/50 backdrop-blur-md p-0.5 rounded-xl border border-white/10 shadow-lg">
                     <button 
                       onClick={() => setSCurveMode('weekly')}
-                      className={`px-6 py-2 rounded-xl text-[10px] font-normal uppercase tracking-tight transition-all ${sCurveMode === 'weekly' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'}`}
+                      className={`px-4 py-1.5 rounded-lg text-[9px] font-normal uppercase tracking-tight transition-all ${sCurveMode === 'weekly' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'}`}
                     >
                       Weekly
                     </button>
                     <button 
                       onClick={() => setSCurveMode('monthly')}
-                      className={`px-6 py-2 rounded-xl text-[10px] font-normal uppercase tracking-tight transition-all ${sCurveMode === 'monthly' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'}`}
+                      className={`px-4 py-1.5 rounded-lg text-[9px] font-normal uppercase tracking-tight transition-all ${sCurveMode === 'monthly' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:text-white'}`}
                     >
                       Monthly
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]" />
-                      <span className="text-[10px] font-normal text-slate-300 uppercase tracking-tight">Plan Line</span>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.6)]" />
+                      <span className="text-[9px] font-normal text-slate-300 uppercase tracking-tight">Plan Line</span>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className="w-3 h-3 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]" />
-                      <span className="text-[10px] font-normal text-slate-300 uppercase tracking-tight">Actual Line</span>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.6)]" />
+                      <span className="text-[9px] font-normal text-slate-300 uppercase tracking-tight">Actual Line</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Swipe Hint for Mobile */}
-              <div className="md:hidden flex items-center justify-center gap-3 mb-6 py-3 bg-white/5 rounded-2xl border border-white/5 animate-pulse">
-                <ArrowLeftRight className="w-4 h-4 text-indigo-400" />
-                <span className="text-[10px] font-normal text-slate-400 uppercase tracking-[0.2em] italic">ไถซ้าย-ขวา เพื่อดูรายละเอียด</span>
-              </div>
-
-              <div className="mobile-chart-scroll-wrapper h-[400px] md:h-[550px] w-full relative overflow-x-auto overflow-y-hidden custom-scrollbar pb-6 scroll-smooth">
-                <div 
-                  className="h-full transition-all duration-500"
-                  style={{ 
-                    width: '100%',
-                    // Responsive width logic
-                    ...({
-                      '--mobile-chart-width': `${Math.max(sCurveData.labels.length * 25, 1200)}px`,
-                      '--desktop-chart-width': sCurveMode === 'weekly' 
-                        ? `${Math.max(sCurveData.labels.length * 30, 800)}px` 
-                        : '100%'
-                    } as any)
-                  }}
-                >
-                  <div className="h-full w-[var(--mobile-chart-width)] md:w-[var(--desktop-chart-width)] min-w-full">
-                    <Line data={sCurveData} options={sCurveOptions} />
-                  </div>
-                </div>
+              {/* Responsive 400px high container without any manual horizontal scroll wrapper on mobile */}
+              <div key={sCurveMode} className="h-[400px] w-full relative mt-4 animate-fade-in">
+                <Line data={sCurveData} options={sCurveOptions} />
               </div>
               
-              <div className="mt-10 pt-8 border-t border-white/5 flex flex-wrap gap-8 justify-center lg:justify-start">
-                <div className="space-y-1">
-                  <p className="text-[10px] font-normal text-slate-500 uppercase tracking-tight">Status</p>
-                  <p className="text-sm font-light text-white uppercase tracking-tight">System Optimized</p>
+              <div className="mt-4 pt-4 border-t border-white/5 flex flex-wrap gap-6 justify-center lg:justify-start">
+                <div className="space-y-0.5">
+                  <p className="text-[9px] font-normal text-slate-500 uppercase tracking-tight">Status</p>
+                  <p className="text-xs font-light text-white uppercase tracking-tight">System Optimized</p>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-[10px] font-normal text-slate-500 uppercase tracking-tight">Data Points</p>
-                  <p className="text-sm font-light text-white uppercase tracking-tight">{dashMonthOptions.length} Monthly Nodes</p>
+                <div className="space-y-0.5">
+                  <p className="text-[9px] font-normal text-slate-500 uppercase tracking-tight">Data Points</p>
+                  <p className="text-xs font-light text-white uppercase tracking-tight">{dashMonthOptions.length} Monthly Nodes</p>
                 </div>
-                <div className="space-y-1">
-                   <p className="text-[10px] font-normal text-slate-500 uppercase tracking-tight">Engine</p>
-                   <p className="text-sm font-light text-white uppercase tracking-tight">Chart.js Visualizer</p>
+                <div className="space-y-0.5">
+                   <p className="text-[9px] font-normal text-slate-500 uppercase tracking-tight">Engine</p>
+                   <p className="text-xs font-light text-white uppercase tracking-tight">Chart.js Visualizer</p>
                 </div>
               </div>
             </div>
           </motion.div>
         )}
-      </div>
 
       <div className="flex items-center justify-between mb-8">
-        <h3 className="text-xl font-light text-slate-200 uppercase tracking-tight">Project Management Modules</h3>
+        <p className="text-xl font-light text-slate-200 uppercase tracking-tight">Project Management Modules</p>
         <div className="h-px flex-1 bg-white/5 mx-6" />
       </div>
 
@@ -1309,7 +2228,7 @@ export default function ProjectDetailView({ project, onBack, userRole }: Project
                   {React.cloneElement(card.icon as React.ReactElement, { className: 'w-6 h-6' })}
                 </div>
                 <div className="space-y-3">
-                  <h4 className="font-light text-2xl text-white group-hover:text-brand-blue transition-colors uppercase tracking-normal leading-none">{card.title}</h4>
+                  <p className="font-light text-2xl text-white group-hover:text-brand-blue transition-colors uppercase tracking-normal leading-none">{card.title}</p>
                   <p className="text-sm text-slate-200 font-light leading-relaxed line-clamp-2 uppercase opacity-80">{card.desc}</p>
                 </div>
               </div>
@@ -1632,17 +2551,20 @@ function InfoItem({ label, value, highlight = false }: { label: string, value: s
   );
 }
 
-function SummaryCard({ title, children, color, glow, border }: { title: string, children: React.ReactNode, color: string, glow: string, border: string }) {
+function SummaryCard({ title, children, color, glow, border, action }: { title: string, children: React.ReactNode, color: string, glow: string, border: string, action?: React.ReactNode }) {
   return (
     <motion.div 
-      whileHover={{ y: -5, transition: { duration: 0.3, ease: "easeOut" } }}
-      className={`bg-slate-900 border border-white/5 p-8 lg:p-10 rounded-[32px] transition-all shadow-2xl relative overflow-hidden group ${glow} flex flex-col justify-between min-h-[350px] ${border}`}
+      whileHover={{ y: -3, transition: { duration: 0.2, ease: "easeOut" } }}
+      className={`bg-slate-900 border border-white/5 p-5 rounded-3xl transition-all shadow-xl relative overflow-hidden group ${glow} flex flex-col justify-between min-h-[200px] ${border}`}
     >
-      <div className="absolute -top-10 -right-10 w-64 h-64 bg-white/5 rounded-full blur-[100px] group-hover:bg-white/10 transition-all" />
-      <h4 className={`text-xl font-light uppercase mb-10 ${color} tracking-tight flex items-center gap-4`}>
-        <div className={`w-2 h-2 rounded-full ${color} bg-current shadow-[0_0_10px_currentColor]`} />
-        {title}
-      </h4>
+      <div className="absolute -top-10 -right-10 w-48 h-48 bg-white/5 rounded-full blur-[80px] group-hover:bg-white/10 transition-all" />
+      <div className="flex items-center justify-between mb-4 relative z-10 gap-4">
+        <div className={`text-xs font-light uppercase ${color} tracking-wider flex items-center gap-2`}>
+          <div className={`w-1.5 h-1.5 rounded-full ${color} bg-current shadow-[0_0_8px_currentColor]`} />
+          {title}
+        </div>
+        {action}
+      </div>
       <div className="relative z-10 flex-1">
         {children}
       </div>

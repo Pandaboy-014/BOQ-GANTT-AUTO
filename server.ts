@@ -12,7 +12,7 @@ async function startServer() {
 
   // Proxy API route to avoid CORS issues with Google Apps Script
   app.get('/api/proxy', async (req, res) => {
-    const targetUrl = req.query.url as string;
+    let targetUrl = (req.query.url as string || '').trim();
     
     if (!targetUrl) {
       return res.status(400).json({ error: 'Missing url parameter' });
@@ -51,6 +51,19 @@ async function startServer() {
         const json = JSON.parse(text);
         return res.json(json);
       } catch (e) {
+        // Try to extract gviz/tq JSON padding if it's wrapped
+        try {
+          const startIdx = text.indexOf('{');
+          const endIdx = text.lastIndexOf('}');
+          if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+            const cleanedText = text.substring(startIdx, endIdx + 1);
+            const json = JSON.parse(cleanedText);
+            return res.json(json);
+          }
+        } catch (innerErr) {
+          // Ignore and proceed to main error handling
+        }
+
         console.error(`[Proxy] Failed to parse target response as JSON. Content-Type: ${contentType}`);
         
         if (text.includes('<!DOCTYPE html>') || text.includes('<html')) {
