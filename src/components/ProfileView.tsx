@@ -21,9 +21,12 @@ import {
   updatePassword, 
   reauthenticateWithCredential, 
   EmailAuthProvider,
-  signOut
+  signOut,
+  deleteUser
 } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { showToast, showErrorToast } from '../lib/toast';
+
 
 interface ProfileViewProps {
   onBack: () => void;
@@ -42,6 +45,9 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwords, setPasswords] = useState({ old: '', new: '', confirm: '' });
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const isPasswordUser = auth.currentUser?.providerData.some(p => p.providerId === 'password');
 
@@ -80,8 +86,10 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
         avatarUrl
       });
       setSuccess('อัปเดตข้อมูลสำเร็จ');
+      showToast('อัปเดตข้อมูลส่วนตัวสำเร็จ', 'success');
       setUserData({ ...userData, name, phone, avatarUrl });
     } catch (err: any) {
+      showErrorToast(err, 'บันทึกข้อมูลไม่สำเร็จ');
       setError(err.message || 'บันทึกข้อมูลไม่สำเร็จ');
     } finally {
       setSaving(false);
@@ -92,6 +100,7 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
     if (!auth.currentUser) return;
     navigator.clipboard.writeText(auth.currentUser.uid);
     setSuccess('คัดลอก UID สำเร็จ');
+    showToast('คัดลอก UID สำเร็จ', 'success');
     setTimeout(() => setSuccess(null), 3000);
   };
 
@@ -133,13 +142,64 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
       
       await updatePassword(auth.currentUser, passwords.new);
       setSuccess('เปลี่ยนรหัสผ่านสำเร็จแล้ว');
+      showToast('เปลี่ยนรหัสผ่านสำเร็จแล้ว', 'success');
       setShowPasswordModal(false);
       setPasswords({ old: '', new: '', confirm: '' });
     } catch (err: any) {
       if (err.code === 'auth/requires-recent-login') {
-        setError('เพื่อความปลอดภัย โปรดออกจากระบบแล้วเข้าสู่ระบบใหม่อีกครั้งก่อนทำการเปลี่ยนรหัสผ่าน');
+        const msg = 'เพื่อความปลอดภัย โปรดออกจากระบบแล้วเข้าสู่ระบบใหม่อีกครั้งก่อนทำการเปลี่ยนรหัสผ่าน';
+        setError(msg);
+        showToast(msg, 'error');
       } else {
+        showErrorToast(err, 'เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน');
         setError(err.message || 'เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth.currentUser) return;
+
+    if (deleteConfirmText !== auth.currentUser.email) {
+      setError('โปรดพิมพ์อีเมลของคุณให้ถูกต้องเพื่อยืนยันการลบบัญชี');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const user = auth.currentUser;
+
+      // Reauthenticate if password user
+      if (isPasswordUser) {
+        if (!deletePassword) {
+          setError('โปรดป้อนรหัสผ่านปัจจุบันของคุณเพื่อดำเนินขั้นตอนลบบัญชี');
+          setSaving(false);
+          return;
+        }
+        const credential = EmailAuthProvider.credential(user.email!, deletePassword);
+        await reauthenticateWithCredential(user, credential);
+      }
+
+      // Delete user document in Firestore first (since rules allow isOwner(userId))
+      await deleteDoc(doc(db, 'users', user.uid));
+
+      // Delete user from Firebase Auth
+      await deleteUser(user);
+      
+      showToast('ลบบัญชีผู้ใช้งานสำเร็จแล้ว', 'success');
+      await signOut(auth);
+    } catch (err: any) {
+      if (err.code === 'auth/requires-recent-login') {
+        const msg = 'เพื่อความปลอดภัย โปรดออกจากระบบและลงชื่อเข้าใช้งานใหม่อีกครั้งเพื่อยืนยันสิทธิ์ในการลบบัญชี';
+        setError(msg);
+        showToast(msg, 'error');
+      } else {
+        showErrorToast(err, 'เกิดข้อผิดพลาดในการลบบัญชีผู้ใช้');
+        setError(err.message || 'เกิดข้อผิดพลาดในการลบบัญชีผู้ใช้');
       }
     } finally {
       setSaving(false);
@@ -364,6 +424,36 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
                 </div>
               </form>
             </div>
+
+            {/* Danger Zone */}
+            <div className="bg-[#0a0f1a] border border-rose-500/10 rounded-[48px] p-12 shadow-2xl relative overflow-hidden">
+              <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-rose-500/20 to-transparent" />
+              <div className="flex items-center justify-between mb-8">
+                <div className="space-y-1">
+                  <h3 className="text-2xl font-light uppercase tracking-tight text-white flex items-center gap-4 leading-none">
+                    <div className="w-6 h-1 bg-rose-500 rounded-full" />
+                    Danger Zone
+                  </h3>
+                  <p className="text-[10px] font-normal text-slate-600 uppercase tracking-tight ml-10">การดำเนินการที่อาจส่งผลเสียต่อระบบ</p>
+                </div>
+              </div>
+
+              <div className="p-8 bg-rose-500/[0.02] border border-rose-500/10 rounded-3xl space-y-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-normal text-rose-400 uppercase tracking-tight">ลบบัญชีผู้ใช้งานถาวร</h4>
+                  <p className="text-xs text-slate-500 leading-relaxed font-light">
+                    เมื่อคุณลบบัญชี ข้อมูลโครงการ เอกสาร และข้อมูลความร่วมมือเชิงลึกทั้งหมดของคุณ จะถูกตัดความสัมพันธ์อย่างถาวรโดยที่ไม่สามารถย้อนกลับหรือกู้คืนได้อีก
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setShowDeleteModal(true)}
+                  className="px-8 py-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-2xl transition-all font-light uppercase text-xs tracking-tight whitespace-nowrap active:scale-95"
+                >
+                  Delete Account
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -435,6 +525,92 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
                   className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-light py-5 rounded-2xl transition-all shadow-2xl shadow-indigo-600/20 uppercase tracking-tight text-xs disabled:opacity-50"
                 >
                   {saving ? 'Syncing...' : (isPasswordUser ? 'Authorize Update' : 'Initialize Credentials')}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Account Modal */}
+      <AnimatePresence>
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setShowDeleteModal(false);
+                setDeleteConfirmText('');
+                setDeletePassword('');
+              }}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.98, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.98, opacity: 0, y: 15 }}
+              className="relative w-full max-w-md bg-[#0a0f1a] border border-rose-500/20 rounded-[48px] p-12 shadow-3xl overflow-hidden"
+            >
+              <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-rose-500/40 to-transparent" />
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-2xl font-light uppercase tracking-tight text-white leading-tight">ลบบัญชีผู้ใช้งาน</h3>
+                  <p className="text-[10px] font-normal text-rose-500 uppercase tracking-tight mt-1.5">&#9888; คอนเฟิร์มการดำเนินการแบบถาวร</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setDeleteConfirmText('');
+                    setDeletePassword('');
+                  }} 
+                  className="p-3 hover:bg-white/5 rounded-2xl transition-all"
+                >
+                  <X className="w-5 h-5 text-slate-600" />
+                </button>
+              </div>
+
+              <div className="mb-6 p-4 bg-rose-500/5 border border-rose-500/10 rounded-2xl text-[11px] leading-relaxed font-light text-rose-300">
+                คำเตือน: ข้อมูลบัญชีของคุณจะถูกลบออกจากระเบียนหลักและสิทธิ์การเข้าถึงทั้งหมดจะถูกเพิกถอน ไม่สามารถยกเลิกสิทธิ์นี้ภายหลังได้
+              </div>
+
+              <form onSubmit={handleDeleteAccount} className="space-y-6">
+                <div className="space-y-4">
+                  {isPasswordUser && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">ป้อนรหัสผ่านปัจจุบันของคุณเพื่อพิสูจน์สิทธิ์</label>
+                      <input 
+                        type="password"
+                        required
+                        value={deletePassword}
+                        onChange={(e) => setDeletePassword(e.target.value)}
+                        placeholder="รหัสผ่านของคุณ"
+                        className="w-full bg-slate-900 border border-white/5 rounded-2xl py-4 px-6 text-white text-sm font-light tracking-tight focus:ring-1 focus:ring-rose-500/30 outline-none"
+                      />
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-light text-slate-500 uppercase tracking-tight ml-1">
+                      ป้อนอีเมลของคุณเพื่อยืนยันตน: <span className="text-indigo-400 font-mono select-all font-bold">{auth.currentUser?.email}</span>
+                    </label>
+                    <input 
+                      type="email"
+                      required
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="ป้อนอีเมลเพื่อยืนยัน"
+                      className="w-full bg-slate-900 border border-white/5 rounded-2xl py-4 px-6 text-white text-sm font-light tracking-tight focus:ring-1 focus:ring-rose-500/30 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={saving || (deleteConfirmText !== auth.currentUser?.email)}
+                  className="w-full bg-rose-600 hover:bg-rose-500 text-white font-light py-5 rounded-2xl transition-all shadow-2xl shadow-rose-600/20 uppercase tracking-tight text-xs disabled:opacity-35 disabled:cursor-not-allowed"
+                >
+                  {saving ? 'Deleting Account...' : 'ยืนยันการลบบัญชีและออกจากระบบ'}
                 </button>
               </form>
             </motion.div>

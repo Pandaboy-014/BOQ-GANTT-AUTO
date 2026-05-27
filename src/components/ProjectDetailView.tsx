@@ -44,9 +44,10 @@ import { ProjectInfo } from '../types.ts';
 import GanttView from './GanttView.tsx';
 import ProjectInfoView from './ProjectInfoView.tsx';
 import SCurveView from './SCurveView.tsx';
-import CommandCenterView from './CommandCenterView.tsx';
 import { db, auth } from '../lib/firebase';
 import { collection, query, where, getDocs, updateDoc, doc, arrayUnion, deleteDoc, getDoc } from 'firebase/firestore';
+import { showToast, showErrorToast } from '../lib/toast';
+
 
 // Register ChartJS
 ChartJS.register(
@@ -95,7 +96,6 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
   const [showGantt, setShowGantt] = useState(false);
   const [showSCurve, setShowSCurve] = useState(false);
   const [showProjectInfo, setShowProjectInfo] = useState(false);
-  const [showCommandCenter, setShowCommandCenter] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [searchEmail, setSearchEmail] = useState('');
   const [searching, setSearching] = useState(false);
@@ -402,8 +402,10 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
 
   const getDayDiff = (d1: {day: number, month: number, year: number}, d2: {day: number, month: number, year: number}) => {
     // Convert BE to AD for Date object
-    const date1 = new Date(d1.year - 543, d1.month - 1, d1.day);
-    const date2 = new Date(d2.year - 543, d2.month - 1, d2.day);
+    const y1 = d1.year > 2400 ? d1.year - 543 : d1.year;
+    const y2 = d2.year > 2400 ? d2.year - 543 : d2.year;
+    const date1 = new Date(y1, d1.month - 1, d1.day);
+    const date2 = new Date(y2, d2.month - 1, d2.day);
     return Math.floor((date2.getTime() - date1.getTime()) / (1000 * 3600 * 24));
   };
 
@@ -459,7 +461,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
   };
 
   const getMonthlySum = (dailyList: any[], month: number, thaiYear: number) => {
-    const gregorianY = thaiYear - 543;
+    const gregorianY = thaiYear > 2400 ? thaiYear - 543 : thaiYear;
     const endPeriodDate = new Date(gregorianY, month - 1, 15, 23, 59, 59, 999);
     
     let startPeriodMonth = month - 2; // zero-based month, previous month is month - 2
@@ -533,9 +535,21 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
 
     try {
       const proxyUrl = `/api/proxy?url=${encodeURIComponent(project.apiUrl)}`;
-      const res = await fetch(proxyUrl);
-      if (!res.ok) {
-        throw new Error(`HTTP Error ${res.status}`);
+      let res: Response;
+      try {
+        res = await fetch(proxyUrl);
+        if (!res.ok) {
+          throw new Error(`HTTP Error ${res.status}`);
+        }
+      } catch (proxyErr) {
+        console.warn(`Proxy fetch failed in DetailView, trying direct fetch...`, proxyErr);
+        res = await fetch(project.apiUrl, {
+          method: 'GET',
+          redirect: 'follow'
+        });
+        if (!res.ok) {
+          throw new Error(`Direct HTTP Error ${res.status}`);
+        }
       }
       const text = await res.text();
       let parsedJson: any;
@@ -685,6 +699,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
   }, [fetchExternalData, project.apiUrl]);
 
   const isOwner = auth.currentUser?.uid === project.ownerId;
+  const canDeleteProject = (!project.ownerId || isOwner || project.memberIds?.includes(auth.currentUser?.uid || '')) && userRole !== 'manager';
 
   const dashboardData = React.useMemo(() => {
     const cleanNumStringLocal = (str: any): number => {
@@ -791,17 +806,14 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
           } else {
             const monthStr = String(item.month || "").trim();
             let mMonth = 0;
-            let mYear = 0;
             for (let idx = 0; idx < THAI_MONTH_NAMES.length; idx++) {
               if (monthStr.includes(THAI_MONTH_NAMES[idx])) {
                 mMonth = idx + 1;
                 break;
               }
             }
-            const yearMatch = monthStr.match(/\b(25\d{2})\b/);
-            if (yearMatch) {
-              mYear = parseInt(yearMatch[1], 10);
-            }
+            const yearMatch = monthStr.match(/\b(20\d{2}|21\d{2}|25\d{2}|26\d{2})\b/);
+            const mYear = yearMatch ? parseInt(yearMatch[1], 10) : (new Date().getFullYear() + 543);
 
             if (mMonth > 0 && mYear > 0) {
               const { actualSum } = getMonthlySum(d.daily || [], mMonth, mYear);
@@ -841,17 +853,14 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
           } else {
             const monthStr = String(item.month || "").trim();
             let mMonth = 0;
-            let mYear = 0;
             for (let idx = 0; idx < THAI_MONTH_NAMES.length; idx++) {
               if (monthStr.includes(THAI_MONTH_NAMES[idx])) {
                 mMonth = idx + 1;
                 break;
               }
             }
-            const yearMatch = monthStr.match(/\b(25\d{2})\b/);
-            if (yearMatch) {
-              mYear = parseInt(yearMatch[1], 10);
-            }
+            const yearMatch = monthStr.match(/\b(20\d{2}|21\d{2}|25\d{2}|26\d{2})\b/);
+            const mYear = yearMatch ? parseInt(yearMatch[1], 10) : (new Date().getFullYear() + 543);
 
             if (mMonth > 0 && mYear > 0) {
               const { actualSum } = getMonthlySum(d.daily || [], mMonth, mYear);
@@ -1510,15 +1519,11 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       batch.delete(doc(db, 'projects', project.id));
       
       await batch.commit();
+      showToast("ลบโครงการเรียบร้อยแล้ว", "success");
       onBack(); 
     } catch (err: any) {
       console.error("Error deleting project:", err);
-      // More specific error message
-      if (err.code === 'permission-denied') {
-        alert("คุณไม่มีสิทธิ์ลบโครงการนี้ (เฉพาะเจ้าของโครงการเท่านั้น)");
-      } else {
-        alert("ไม่สามารถลบโครงการได้: " + (err.message || "Unknown error"));
-      }
+      showErrorToast(err, "ไม่สามารถลบโครงการได้");
     } finally {
       setDeleting(false);
       setShowDeleteConfirm(false);
@@ -1595,11 +1600,14 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       await updateDoc(doc(db, 'projects', project.id), {
         memberIds: arrayUnion(foundUser.id)
       });
-      setSuccessMsg(`เพิ่ม ${foundUser.name} เข้าสู่โครงการเรียบร้อยแล้ว`);
+      const successMessage = `เพิ่ม ${foundUser.name} เข้าสู่โครงการเรียบร้อยแล้ว`;
+      setSuccessMsg(successMessage);
+      showToast(successMessage, "success");
       setFoundUser(null);
       setSearchEmail('');
     } catch (err: any) {
       console.error("Add member error:", err);
+      showErrorToast(err, "ไม่สามารถเพิ่มสมาชิกได้");
       setSearchError('ไม่สามารถเพิ่มสมาชิกได้: ' + (err.message || 'Unknown error'));
     } finally {
       setSearching(false);
@@ -1658,16 +1666,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
               </div>
             </div>
             <div className="flex items-center gap-3 ml-auto">
-              <motion.button 
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setShowCommandCenter(true)}
-                className="p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl text-cyan-400 hover:bg-cyan-500 hover:text-white transition-all font-light text-sm uppercase flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.1)]"
-              >
-                <Monitor className="w-4 h-4" />
-                COMMAND CENTER
-              </motion.button>
-              {isOwner && (
+              {canDeleteProject && (
                 <motion.button 
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
@@ -1675,7 +1674,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                   className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-500 hover:bg-rose-500 hover:text-white transition-all font-light text-sm uppercase flex items-center gap-2"
                 >
                   <Trash className="w-4 h-4" />
-                  DELETE
+                  ลบโครงการ / DELETE
                 </motion.button>
               )}
             </div>
@@ -1691,7 +1690,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
           />
           <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent" />
           
-          {isOwner && (
+          {(isOwner && userRole !== 'manager') && (
             <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-all transform translate-y-2 group-hover:translate-y-0">
               <input 
                 type="file"
@@ -1712,9 +1711,10 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                         await updateDoc(doc(db, 'projects', project.id), {
                           imageUrl: base64
                         });
+                        showToast("อัปโหลดไฟล์/รูปภาพแผนที่สำเร็จ", "success");
                       } catch (err) {
                         console.error("Error updating image:", err);
-                        alert("ไม่สามารถอัปโหลดรูปภาพได้");
+                        showErrorToast(err, "ไม่สามารถอัปโหลดรูปภาพได้");
                       }
                     };
                     reader.readAsDataURL(file);
@@ -2264,27 +2264,6 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       </div>
 
       <AnimatePresence>
-        {showCommandCenter && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="fixed inset-0 z-[120] bg-slate-950"
-          >
-            <CommandCenterView 
-              project={project} 
-              onBack={() => setShowCommandCenter(false)} 
-              externalData={{ 
-                progress: externalProgress, 
-                budget: externalBudget,
-                planProgress: externalPlanProgress
-              }}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
         {showGantt && (
           <motion.div 
             initial={{ opacity: 0, y: 50 }}
@@ -2393,79 +2372,83 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
               </div>
 
               <div className="p-8 space-y-8">
-                <form onSubmit={handleSearchUser} className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-black text-slate-200 uppercase ml-1">Search User by UID Only</label>
-                    <div className="relative group">
-                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-600 group-focus-within:text-indigo-500 transition-colors" />
-                      <input 
-                        type="text"
-                        value={searchEmail}
-                        onChange={(e) => setSearchEmail(e.target.value)}
-                        placeholder="Paste User UID here..."
-                        className="w-full bg-slate-800/50 border border-white/5 rounded-2xl py-4 pl-12 pr-6 text-white focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600/50 transition-all font-bold text-sm font-mono tracking-wider"
-                      />
-                      <button 
-                        type="submit"
-                        disabled={searching}
-                        className="absolute right-2 top-2 bottom-2 px-6 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs uppercase rounded-xl transition-all disabled:opacity-50"
+                {userRole !== 'manager' && (
+                  <>
+                    <form onSubmit={handleSearchUser} className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-black text-slate-200 uppercase ml-1">Search User by UID Only</label>
+                        <div className="relative group">
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-600 group-focus-within:text-indigo-500 transition-colors" />
+                          <input 
+                            type="text"
+                            value={searchEmail}
+                            onChange={(e) => setSearchEmail(e.target.value)}
+                            placeholder="Paste User UID here..."
+                            className="w-full bg-slate-800/50 border border-white/5 rounded-2xl py-4 pl-12 pr-6 text-white focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600/50 transition-all font-bold text-sm font-mono tracking-wider"
+                          />
+                          <button 
+                            type="submit"
+                            disabled={searching}
+                            className="absolute right-2 top-2 bottom-2 px-6 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs uppercase rounded-xl transition-all disabled:opacity-50"
+                          >
+                            {searching ? '...' : 'Search'}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+
+                    {searchError && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 text-rose-500 text-sm font-bold"
                       >
-                        {searching ? '...' : 'Search'}
-                      </button>
-                    </div>
-                  </div>
-                </form>
+                        <AlertCircle className="w-5 h-5" />
+                        {searchError}
+                      </motion.div>
+                    )}
 
-                {searchError && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-3 text-rose-500 text-sm font-bold"
-                  >
-                    <AlertCircle className="w-5 h-5" />
-                    {searchError}
-                  </motion.div>
-                )}
+                    {successMsg && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3 text-emerald-500 text-sm font-bold"
+                      >
+                        <CheckCircle2 className="w-5 h-5" />
+                        {successMsg}
+                      </motion.div>
+                    )}
 
-                {successMsg && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3 text-emerald-500 text-sm font-bold"
-                  >
-                    <CheckCircle2 className="w-5 h-5" />
-                    {successMsg}
-                  </motion.div>
-                )}
-
-                {foundUser && (
-                  <motion.div 
-                    initial={{ opacity: 1, scale: 1 }}
-                    className="p-6 bg-white/5 border border-white/10 rounded-3xl space-y-6"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-16 h-16 rounded-2xl bg-indigo-500/20 flex items-center justify-center overflow-hidden border border-indigo-500/30">
-                        {foundUser.avatarUrl ? (
-                          <img src={foundUser.avatarUrl} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <Users className="w-8 h-8 text-indigo-500" />
-                        )}
-                      </div>
-                      <div>
-                        <h4 className="font-black text-white text-lg uppercase">{foundUser.name}</h4>
-                        <p className="text-slate-200 font-bold text-xs uppercase tracking-wider opacity-90">{foundUser.role} • {foundUser.email}</p>
-                      </div>
-                    </div>
-                    
-                    <button 
-                      onClick={handleAddMember}
-                      disabled={searching}
-                      className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-2 uppercase text-xs"
-                    >
-                      <UserPlus className="w-4 h-4" />
-                      ADD TEAM MEMBER
-                    </button>
-                  </motion.div>
+                    {foundUser && (
+                      <motion.div 
+                        initial={{ opacity: 1, scale: 1 }}
+                        className="p-6 bg-white/5 border border-white/10 rounded-3xl space-y-6"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-16 h-16 rounded-2xl bg-indigo-500/20 flex items-center justify-center overflow-hidden border border-indigo-500/30">
+                            {foundUser.avatarUrl ? (
+                              <img src={foundUser.avatarUrl} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <Users className="w-8 h-8 text-indigo-500" />
+                            )}
+                          </div>
+                          <div>
+                            <h4 className="font-black text-white text-lg uppercase">{foundUser.name}</h4>
+                            <p className="text-slate-200 font-bold text-xs uppercase tracking-wider opacity-90">{foundUser.role} • {foundUser.email}</p>
+                          </div>
+                        </div>
+                        
+                        <button 
+                          onClick={handleAddMember}
+                          disabled={searching}
+                          className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-2 uppercase text-xs"
+                        >
+                          <UserPlus className="w-4 h-4" />
+                          ADD TEAM MEMBER
+                        </button>
+                      </motion.div>
+                    )}
+                  </>
                 )}
 
                 <div className="pt-4 border-t border-white/5">
@@ -2503,14 +2486,17 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                             <p className="text-xs text-indigo-400 font-bold uppercase tracking-wider">{member.role} • Member</p>
                           </div>
                         </div>
-                        {isOwner && (
+                        {(isOwner && userRole !== 'manager') && (
                           <button 
                             onClick={async () => {
                               try {
                                 const newMembers = project.memberIds.filter(id => id !== member.id);
                                 await updateDoc(doc(db, 'projects', project.id), { memberIds: newMembers });
-                                setSuccessMsg(`ถอน ${member.name} ออกจากโครงการแล้ว`);
+                                const removeMsg = `ถอน ${member.name} ออกจากโครงการแล้ว`;
+                                setSuccessMsg(removeMsg);
+                                showToast(removeMsg, "success");
                               } catch (e) {
+                                showErrorToast(e, "ไม่สามารถลบสมาชิกได้");
                                 setSearchError('ไม่สามารถลบสมาชิกได้');
                               }
                             }}

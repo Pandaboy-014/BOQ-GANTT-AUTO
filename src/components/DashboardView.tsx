@@ -69,7 +69,7 @@ const sumDeductionsNet = (dList: any[], dailyList: any[], budgetVal: number) => 
   ];
   
   const getMonthSumCard = (list: any[], m: number, y: number) => {
-    const gregorianY = y - 543;
+    const gregorianY = y > 2400 ? y - 543 : y;
     const endD = new Date(gregorianY, m - 1, 15, 23, 59, 59, 999);
     let startM = m - 2;
     let startY = gregorianY;
@@ -81,7 +81,9 @@ const sumDeductionsNet = (dList: any[], dailyList: any[], budgetVal: number) => 
       if (!item || !item.date) return;
       const dmy = String(item.date).trim().split("/");
       if (dmy.length === 3) {
-        const iDate = new Date(parseInt(dmy[2], 10) - 543, parseInt(dmy[1], 10) - 1, parseInt(dmy[0], 10));
+        let yr = parseInt(dmy[2], 10);
+        if (yr > 2400) yr -= 543;
+        const iDate = new Date(yr, parseInt(dmy[1], 10) - 1, parseInt(dmy[0], 10));
         const itemTime = iDate.getTime();
         if (itemTime >= startD.getTime() && itemTime <= endD.getTime()) {
           let str = item.actual !== undefined ? item.actual : "0";
@@ -194,13 +196,13 @@ const parseMonthYearFromLabel = (monthStr: string) => {
       break;
     }
   }
-  const yearMatch = norm.match(/\b(25\d{2}|26\d{2}|24\d{2})\b/);
-  const mYear = yearMatch ? parseInt(yearMatch[1], 10) : new Date().getFullYear() + 543;
+  const yearMatch = norm.match(/\b(20\d{2}|21\d{2}|25\d{2}|26\d{2}|24\d{2})\b/);
+  const mYear = yearMatch ? parseInt(yearMatch[1], 10) : new Date().getFullYear();
   return { monthIndex: mMonth, thaiYear: mYear };
 };
 
 const getMonthlySumFromDaily = (dailyList: any[], month: number, thaiYear: number) => {
-  const gregorianY = thaiYear - 543;
+  const gregorianY = thaiYear > 2400 ? thaiYear - 543 : thaiYear;
   const endPeriodDate = new Date(gregorianY, month - 1, 15, 23, 59, 59, 999);
   
   let startPeriodMonth = month - 2;
@@ -242,6 +244,87 @@ const getMonthlySumFromDaily = (dailyList: any[], month: number, thaiYear: numbe
   }
 
   return actualSum;
+};
+
+const getMonthlyPlanAndActualFromDaily = (dailyList: any[], month: number, thaiYear: number, budget: number) => {
+  if (!dailyList || dailyList.length === 0) {
+    return { planAmount: 0, actualAmount: 0 };
+  }
+  const gregorianY = thaiYear - 543;
+  const endPeriodDate = new Date(gregorianY, month - 1, 15, 23, 59, 59, 999);
+  
+  let startPeriodMonth = month - 2;
+  let startPeriodYear = gregorianY;
+  if (month === 1) {
+    startPeriodMonth = 11;
+    startPeriodYear = gregorianY - 1;
+  }
+  const startPeriodDate = new Date(startPeriodYear, startPeriodMonth, 16, 0, 0, 0, 0);
+
+  let planSum = 0;
+  let actualSum = 0;
+
+  for (const item of dailyList) {
+    if (!item || !item.date) continue;
+    const parts = String(item.date).trim().split("/");
+    if (parts.length >= 3) {
+      const d = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      let y = parseInt(parts[2], 10);
+      if (y > 2400) y -= 543;
+      const itemDate = new Date(y, m - 1, d);
+      const itemTime = itemDate.getTime();
+      
+      if (itemTime >= startPeriodDate.getTime() && itemTime <= endPeriodDate.getTime()) {
+        const planCellVal = item.plan !== undefined ? item.plan : item.plan_val;
+        if (planCellVal !== null && planCellVal !== undefined && planCellVal !== "") {
+          const str = String(planCellVal).trim();
+          const hasPercent = str.includes('%');
+          let num = parseFloat(str.replace(/[,%฿\s]/g, ""));
+          if (!isNaN(num)) {
+            if (hasPercent) {
+              planSum += num / 100;
+            } else {
+              planSum += num;
+            }
+          }
+        }
+        
+        const actualCellVal = item.actual !== undefined ? item.actual : item.actual_val;
+        if (actualCellVal !== null && actualCellVal !== undefined && actualCellVal !== "") {
+          const str = String(actualCellVal).trim();
+          const hasPercent = str.includes('%');
+          let num = parseFloat(str.replace(/[,%฿\s]/g, ""));
+          if (!isNaN(num)) {
+            if (hasPercent) {
+              actualSum += num / 100;
+            } else {
+              actualSum += num;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  let finalPlan = 0;
+  if (planSum > 0 && planSum <= 1) {
+    finalPlan = planSum * budget;
+  } else {
+    finalPlan = (planSum / 100) * budget;
+  }
+
+  let finalActual = 0;
+  if (actualSum > 0 && actualSum <= 1) {
+    finalActual = actualSum * budget;
+  } else {
+    finalActual = (actualSum / 100) * budget;
+  }
+
+  return {
+    planAmount: finalPlan,
+    actualAmount: finalActual
+  };
 };
 
 const calculateCumulativeIncomeFromDaily = (dailyList: any[], budget: number, endDateStr?: string, skipCutoff: boolean = true): number => {
@@ -318,7 +401,7 @@ const parseMonthlyDeductions = (dList: any[], dailyList: any[], budgetVal: numbe
   ];
   
   const getMonthSum = (list: any[], m: number, y: number) => {
-    const gregorianY = y - 543;
+    const gregorianY = y > 2400 ? y - 543 : y;
     const endD = new Date(gregorianY, m - 1, 15, 23, 59, 59, 999);
     let startM = m - 2;
     let startY = gregorianY;
@@ -330,7 +413,9 @@ const parseMonthlyDeductions = (dList: any[], dailyList: any[], budgetVal: numbe
       if (!item || !item.date) return;
       const dmy = String(item.date).trim().split("/");
       if (dmy.length === 3) {
-        const iDate = new Date(parseInt(dmy[2], 10) - 543, parseInt(dmy[1], 10) - 1, parseInt(dmy[0], 10));
+        let yr = parseInt(dmy[2], 10);
+        if (yr > 2400) yr -= 543;
+        const iDate = new Date(yr, parseInt(dmy[1], 10) - 1, parseInt(dmy[0], 10));
         const itemTime = iDate.getTime();
         if (itemTime >= startD.getTime() && itemTime <= endD.getTime()) {
           let str = item.actual !== undefined ? item.actual : "0";
@@ -398,9 +483,26 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
     throw new Error("No API URL");
   }
   const proxyUrl = `/api/proxy?url=${encodeURIComponent(project.apiUrl)}`;
-  const response = await fetch(proxyUrl);
-  if (!response.ok) {
-    throw new Error(`HTTP Error ${response.status}`);
+  let response: Response;
+  try {
+    response = await fetch(proxyUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP Error ${response.status}`);
+    }
+  } catch (proxyError) {
+    console.warn(`Proxy fetch failed for ${project.name}, trying direct fetch...`, proxyError);
+    try {
+      response = await fetch(project.apiUrl, {
+        method: 'GET',
+        redirect: 'follow'
+      });
+      if (!response.ok) {
+        throw new Error(`Direct HTTP Error ${response.status}`);
+      }
+    } catch (directError) {
+      console.error(`Direct fetch also failed for ${project.name}:`, directError);
+      throw proxyError;
+    }
   }
 
   const text = await response.text();
@@ -478,9 +580,10 @@ interface DashboardViewProps {
   onAddProject: () => void;
   onLogout: () => void;
   onNavigateProfile: () => void;
+  userRole?: 'manager' | 'engineer' | null;
 }
 
-export default function DashboardView({ projects, onSelectProject, onEditProject, onAddProject, onLogout, onNavigateProfile }: DashboardViewProps) {
+export default function DashboardView({ projects, onSelectProject, onEditProject, onAddProject, onLogout, onNavigateProfile, userRole }: DashboardViewProps) {
   const user = auth.currentUser;
   const [realtimeDataMap, setRealtimeDataMap] = useState<Record<string, RealtimeProjectData>>({});
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
@@ -744,14 +847,101 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
     return sum;
   }, [projects, realtimeDataMap, activeMonth]);
 
+  const totalMaterialTotalAllProjects = React.useMemo(() => {
+    let grandTotal = 0;
+    projects.forEach(p => {
+      const rt = realtimeDataMap[p.id];
+      if (rt) {
+        const md = rt.monthlyDeductions || [];
+        const sum = md.reduce((acc, item) => acc + (item.steel || 0) + (item.material || 0), 0);
+        grandTotal += sum;
+      } else {
+        try {
+          const cached = localStorage.getItem(`project_api_cache_${p.id}`);
+          if (cached) {
+            const cachedObj = JSON.parse(cached);
+            const cachedRes = cachedObj.responseData;
+            if (cachedRes && cachedRes.data) {
+              const d = cachedRes.data;
+              const s = d.summary || {};
+              let projectMatTotal = 0;
+              if (s.material_total !== undefined && s.material_total !== null && s.material_total !== "") {
+                projectMatTotal = parseLocalStr(s.material_total.toString());
+              } else {
+                const budgetVal = parseLocalStr(s.budget) || parseFloat(p.budget?.toString().replace(/[^0-9.]/g, '') || "0");
+                const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
+                const dailyList = d.daily || [];
+                const parsedMD = parseMonthlyDeductions(dList, dailyList, budgetVal);
+                projectMatTotal = parsedMD.reduce((acc, item) => acc + (item.steel || 0) + (item.material || 0), 0);
+              }
+              grandTotal += projectMatTotal;
+            }
+          }
+        } catch (e) {}
+      }
+    });
+    return grandTotal;
+  }, [projects, realtimeDataMap]);
+
+  const selectedMonthPlanAndActualSum = React.useMemo(() => {
+    if (!activeMonth) return { planAmount: 0, actualAmount: 0 };
+    let totalPlanAmt = 0;
+    let totalActualAmt = 0;
+    const { monthIndex, thaiYear } = parseMonthYearFromLabel(activeMonth);
+
+    projects.forEach(p => {
+      const rt = realtimeDataMap[p.id];
+      if (rt) {
+        const budgetVal = rt.budget || parseFloat(p.budget?.toString().replace(/[^0-9.]/g, '') || "0");
+        const { planAmount, actualAmount } = getMonthlyPlanAndActualFromDaily(rt.daily || [], monthIndex, thaiYear, budgetVal);
+        totalPlanAmt += planAmount;
+        totalActualAmt += actualAmount;
+      } else {
+        try {
+          const cached = localStorage.getItem(`project_api_cache_${p.id}`);
+          if (cached) {
+            const cachedObj = JSON.parse(cached);
+            const cachedRes = cachedObj.responseData;
+            if (cachedRes && cachedRes.data) {
+              const d = cachedRes.data;
+              const s = d.summary || {};
+              const budgetVal = parseLocalStr(s.budget) || parseFloat(p.budget?.toString().replace(/[^0-9.]/g, '') || "0");
+              const { planAmount, actualAmount } = getMonthlyPlanAndActualFromDaily(d.daily || [], monthIndex, thaiYear, budgetVal);
+              totalPlanAmt += planAmount;
+              totalActualAmt += actualAmount;
+            }
+          }
+        } catch (e) {}
+      }
+    });
+
+    return {
+      planAmount: totalPlanAmt,
+      actualAmount: totalActualAmt
+    };
+  }, [projects, realtimeDataMap, activeMonth]);
+
   const filteredProjects = React.useMemo(() => {
-    if (!searchQuery.trim()) return projects;
-    return projects.filter(p => 
+    const list = [...projects];
+    list.sort((a, b) => {
+      const rtA = realtimeDataMap[a.id];
+      const rtB = realtimeDataMap[b.id];
+      const budgetA = rtA && typeof rtA.budget === 'number' && !isNaN(rtA.budget)
+        ? rtA.budget
+        : parseLocalStr(a.budget);
+      const budgetB = rtB && typeof rtB.budget === 'number' && !isNaN(rtB.budget)
+        ? rtB.budget
+        : parseLocalStr(b.budget);
+      return budgetB - budgetA;
+    });
+
+    if (!searchQuery.trim()) return list;
+    return list.filter(p => 
       p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.contractor?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.location?.toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [projects, searchQuery]);
+  }, [projects, searchQuery, realtimeDataMap]);
 
   // ON TARGET if overall progressive actual avg is >= plan avg
   const isTargetMet = masterSummary.overallProgress >= masterSummary.overallProgressPlan;
@@ -927,42 +1117,47 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
                       ฿{masterSummary.remainingPayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
+                  <div className="flex justify-end pt-0.5 leading-none">
+                    <span className="text-[9px] text-slate-400 font-light opacity-60">
+                      (ไม่รวม Vat 7%)
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Card 2: Total Net Value */}
-              <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col justify-between hover:border-indigo-500/30 hover:shadow-indigo-500/5 transition-all duration-300 space-y-3">
+              {/* Card 2: Cumulative Expenditures Summary */}
+              <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col hover:border-emerald-500/30 hover:shadow-emerald-500/5 transition-all duration-300 space-y-3">
                 <div className="flex justify-between items-start gap-2">
                   <div className="space-y-0.5 flex-1 min-w-0">
-                    <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider truncate">รวมค่างานสุทธิทุกเดือนทุกโครงการ (สะสม)</p>
-                    <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight truncate leading-none">TOTAL NET VALUE</p>
+                    <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider truncate">รวมค่าใช้จ่ายสะสมทุกโครงการ (ไม่รวม Vat 7%)</p>
+                    <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight truncate leading-none">TOTAL ACCUMULATED EXPENDITURES</p>
                   </div>
-                  <div className="p-2.5 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-indigo-400 flex-shrink-0">
+                  <div className="p-2.5 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 text-[#00FF87] flex-shrink-0">
                     <Building className="w-4 h-4" />
                   </div>
                 </div>
-                <div className="pt-1">
+                <div className="flex-1 flex flex-col justify-center items-center text-center py-4">
                   <p className="text-xl sm:text-2xl font-semibold text-emerald-400 tracking-tight leading-none break-all font-mono">
-                    ฿{masterSummary.totalNetAllProjects.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ฿{totalMaterialTotalAllProjects.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
-                  <p className="text-[10px] text-slate-300 font-light mt-1.5 uppercase tracking-wide leading-tight">
-                    ค่างานสุทธิหลังหักค่าใช้จ่ายรวมทุกโครงการ
+                  <p className="text-[10px] text-slate-300 font-light mt-2 uppercase tracking-wide leading-tight opacity-80">
+                    รวมค่าเหล็ก/คอนกรีต และวัสดุ ทุกเดือนทุกโครงการ
                   </p>
                 </div>
               </div>
 
-              {/* Card 3: Net Balance of Selected Month */}
-              <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col justify-between hover:border-indigo-500/30 hover:shadow-indigo-500/5 transition-all duration-300 space-y-3">
-                <div className="flex justify-between items-start gap-2">
-                  <div className="space-y-0.5">
-                    <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider">คงเหลือค่างานเดือน{activeMonth ? activeMonth.replace(/\d+/g, '').trim() : 'ปัจจุบัน'} (ทุกโครงการ)</p>
-                    <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight leading-none">NET BALANCE {activeMonth ? activeMonth.toUpperCase() : 'THIS MONTH'}</p>
+              {/* Card 3: Monthly Withdrawal Plan vs Actual */}
+              <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-4 sm:p-4.5 shadow-2xl flex flex-col hover:border-indigo-500/30 hover:shadow-indigo-500/5 transition-all duration-300 space-y-2">
+                <div className="flex justify-between items-center gap-2 w-full border-b border-white/5 pb-1.5">
+                  <div className="space-y-0.5 text-left flex-1 min-w-0">
+                    <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider truncate">แผนเบิกประจำเดือน</p>
+                    <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight leading-none truncate">MONTHLY WITHDRAWAL PLAN</p>
                   </div>
                   <div className="relative shrink-0">
                     <select
                       value={activeMonth}
                       onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="bg-slate-900 border border-white/20 rounded-xl px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/35 hover:bg-slate-950 transition-all font-light"
+                      className="bg-slate-900 border border-white/20 rounded-xl px-2.5 py-0.5 text-[10px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/35 hover:bg-slate-950 transition-all font-light"
                     >
                       {allMonths.length === 0 ? (
                         <option value="">ไม่มีข้อมูลเดือน</option>
@@ -976,13 +1171,20 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
                     </select>
                   </div>
                 </div>
-                <div className="pt-1">
-                  <p className="text-xl sm:text-2xl font-semibold text-orange-400 tracking-tight leading-none break-all font-mono">
-                    ฿{selectedMonthNetBalanceSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                  <p className="text-[10px] text-slate-300 font-light mt-1.5 uppercase tracking-wide leading-tight">
-                    ยอดคงเหลือสุทธิหลังหักของเดือน {activeMonth || '-'} รวมทุกโครงการ
-                  </p>
+
+                <div className="space-y-2 pt-1 flex-1 flex flex-col justify-center">
+                  <div className="text-center w-full space-y-0.5 bg-[#141b2e]/35 py-2 px-3 rounded-xl border border-white/5">
+                    <p className="text-[10px] sm:text-[11px] font-medium text-cyan-400 uppercase tracking-wide">PLAN เบิกไว้</p>
+                    <p className="text-xs sm:text-sm md:text-base font-bold font-mono text-cyan-300">
+                      ฿{selectedMonthPlanAndActualSum.planAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="text-center w-full space-y-0.5 bg-[#141b2e]/35 py-2 px-3 rounded-xl border border-white/5">
+                    <p className="text-[10px] sm:text-[11px] font-medium text-emerald-400 uppercase tracking-wide">ACTUAL ทำจริง</p>
+                    <p className="text-xs sm:text-sm md:text-base font-bold font-mono text-emerald-300">
+                      ฿{selectedMonthPlanAndActualSum.actualAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -995,13 +1197,15 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
                   <h3 className="text-3xl sm:text-4xl font-light text-white uppercase tracking-tight">รายชื่อโครงการ</h3>
                   <p className="text-xs font-normal text-slate-400 uppercase tracking-[0.2em] leading-none opacity-60">Project Portfolio Management</p>
                 </div>
-                <button
-                  onClick={onAddProject}
-                  className="md:hidden flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3.5 py-2.5 text-xs font-light transition-all shadow-lg shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
-                >
-                  <Plus className="w-4 h-4" />
-                  เพิ่มโครงการ
-                </button>
+                {userRole !== 'manager' && (
+                  <button
+                    onClick={onAddProject}
+                    className="md:hidden flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3.5 py-2.5 text-xs font-light transition-all shadow-lg shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
+                  >
+                    <Plus className="w-4 h-4" />
+                    เพิ่มโครงการ
+                  </button>
+                )}
               </div>
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
                 <div className="relative flex-1 sm:flex-initial">
@@ -1013,13 +1217,15 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
                     className="bg-slate-900/50 border border-white/10 rounded-2xl py-3.5 pl-14 pr-8 text-white focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue/40 transition-all w-full md:min-w-[320px] shadow-inner font-light text-sm tracking-tight"
                   />
                 </div>
-                <button
-                  onClick={onAddProject}
-                  className="hidden md:flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-5 py-3.5 text-sm font-light transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap hover:scale-[1.02] active:scale-98"
-                >
-                  <Plus className="w-4 h-4" />
-                  เพิ่มโครงการ
-                </button>
+                {userRole !== 'manager' && (
+                  <button
+                    onClick={onAddProject}
+                    className="hidden md:flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-5 py-3.5 text-sm font-light transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap hover:scale-[1.02] active:scale-98"
+                  >
+                    <Plus className="w-4 h-4" />
+                    เพิ่มโครงการ
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1037,6 +1243,7 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
                     realtimeData={realtimeData}
                     onSelectProject={onSelectProject}
                     onEditProject={onEditProject}
+                    userRole={userRole}
                   />
                 );
               })}
@@ -1056,9 +1263,10 @@ interface ProjectCardProps {
   realtimeData: RealtimeProjectData | null;
   onSelectProject: (p: ProjectInfo) => void;
   onEditProject: (p: ProjectInfo) => void;
+  userRole?: 'manager' | 'engineer' | null;
 }
 
-const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeData, onSelectProject, onEditProject }) => {
+const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeData, onSelectProject, onEditProject, userRole }) => {
   const displayBudget = realtimeData ? realtimeData.budget : (parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0"));
   
   // Calculate cumulative payment up to cutoff using the new daily cumulative helper
@@ -1075,26 +1283,18 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
   ];
   const currentCalendarMonthLabel = `${THAI_MONTHS_LOCAL[currentMonthIdx - 1]} ${currentThaiYearVal}`;
 
-  let monthlyActualBaht = 0;
-  let monthlyNetBalance = 0;
+  let currentMonthPlanBaht = 0;
+  let currentMonthActualBaht = 0;
 
-  if (realtimeData) {
-    const dailySum = getMonthlySumFromDaily(realtimeData.daily, currentMonthIdx, currentThaiYearVal);
-    let actualVal = dailySum;
-    if (actualVal > 0 && actualVal <= 1) {
-      actualVal = actualVal * 100;
-    }
-    monthlyActualBaht = (actualVal / 100) * displayBudget;
-
-    if (realtimeData.monthlyDeductions) {
-      const targetNorm = normalizeMonth(currentCalendarMonthLabel);
-      const matchedDeduction = realtimeData.monthlyDeductions.find(
-        d => normalizeMonth(d.month) === targetNorm
-      );
-      if (matchedDeduction) {
-        monthlyNetBalance = matchedDeduction.netBalance;
-      }
-    }
+  if (realtimeData && realtimeData.daily && realtimeData.daily.length > 0) {
+    const res = getMonthlyPlanAndActualFromDaily(
+      realtimeData.daily,
+      currentMonthIdx,
+      currentThaiYearVal,
+      displayBudget
+    );
+    currentMonthPlanBaht = res.planAmount;
+    currentMonthActualBaht = res.actualAmount;
   }
 
   const cleanNumString = (val: any): number => {
@@ -1224,6 +1424,16 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
               </span>
             </div>
             
+            {/* Plan Monthly */}
+            <div className="space-y-1">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate" title="แผนเบิกประจำเดือน (Plan)">
+                แผนเบิกประจำเดือน (Plan)
+              </span>
+              <span className="text-lg md:text-xl font-semibold text-sky-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                ฿{cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+
             {/* Cumulative Payment */}
             <div className="space-y-1">
               <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light">เบิกสะสม</span>
@@ -1232,24 +1442,13 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
               </span>
             </div>
 
-            {/* Current Month Actual */}
+            {/* Actual Monthly */}
             <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate" title={`เบิกงวดปัจจุบัน (${currentCalendarMonthLabel})`}>
-                เบิกงวดปัจจุบัน ({currentCalendarMonthLabel.replace(/\s+\d+/, '')})
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate" title="ผลงานจริงประจำเดือน (Actual)">
+                ผลงานจริงประจำเดือน (Actual)
               </span>
-              <span className="text-lg md:text-xl font-semibold text-indigo-400 font-mono block truncate" title={`฿${cleanNumString(monthlyActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-                ฿{cleanNumString(monthlyActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-            </div>
-
-            {/* Net Remaining */}
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light">คงเหลือหลังหัก</span>
-              <span className="text-lg md:text-xl font-semibold text-orange-400 font-mono block truncate" title={`฿${cleanNumString(monthlyNetBalance).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-                ฿{cleanNumString(monthlyNetBalance).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-              <span className="text-[9px] md:text-[10px] text-slate-300 font-light block leading-tight mt-0.5 break-words">
-                หัก: Vat, ณ ที่จ่าย, ประกันผลงาน, ค่าวัสดุ
+              <span className="text-lg md:text-xl font-semibold text-orange-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                ฿{cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           </div>
@@ -1263,13 +1462,15 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
               ดูรายละเอียด
               <ChevronRight className="w-3.5 h-3.5 opacity-80" />
             </button>
-            <button 
-              onClick={(e) => { e.stopPropagation(); onEditProject(project); }}
-              className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-white rounded-xl transition-all shadow-md active:scale-95"
-              title="แก้ไขโครงการ"
-            >
-              <Edit2 className="w-3.5 h-3.5" />
-            </button>
+            {userRole !== 'manager' && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); onEditProject(project); }}
+                className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-white rounded-xl transition-all shadow-md active:scale-95"
+                title="แก้ไขโครงการ"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </motion.div>
@@ -1329,6 +1530,13 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
           </div>
 
           <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
+            <span className="text-[9px] text-slate-400 font-light block leading-none truncate" title="แผนเบิกประจำเดือน (Plan)">แผนเบิกประจำเดือน (Plan)</span>
+            <span className="text-[11px] font-semibold text-sky-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+              ฿{cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
             <span className="text-[9px] text-slate-400 font-light block leading-none">เบิกสะสม</span>
             <span className="text-[11px] font-semibold text-emerald-400 font-mono block truncate" title={`฿${cleanNumString(displayCumIncome).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
               ฿{cleanNumString(displayCumIncome).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1336,19 +1544,9 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
           </div>
 
           <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
-            <span className="text-[9px] text-slate-400 font-light block leading-none truncate" title={`เบิกงวดปัจจุบัน (${currentCalendarMonthLabel})`}>เบิกงวด ({currentCalendarMonthLabel.replace(/\s+\d+/, '')})</span>
-            <span className="text-[11px] font-semibold text-indigo-400 font-mono block truncate" title={`฿${cleanNumString(monthlyActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-              ฿{cleanNumString(monthlyActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-
-          <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
-            <span className="text-[9px] text-slate-400 font-light block leading-none">คงเหลือหลังหัก</span>
-            <span className="text-[11px] font-semibold text-orange-400 font-mono block truncate" title={`฿${cleanNumString(monthlyNetBalance).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-              ฿{cleanNumString(monthlyNetBalance).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <span className="text-[9px] text-slate-300 font-light block leading-tight mt-0.5 break-words">
-              หัก: Vat, ณ ที่จ่าย, ประกันผลงาน, ค่าวัสดุ
+            <span className="text-[9px] text-slate-400 font-light block leading-none truncate" title="ผลงานจริงประจำเดือน (Actual)">ผลงานจริงประจำเดือน (Actual)</span>
+            <span className="text-[11px] font-semibold text-orange-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+              ฿{cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -1362,13 +1560,15 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
             ดูรายละเอียด
             <ChevronRight className="w-3.5 h-3.5 opacity-60" />
           </button>
-          <button 
-            onClick={(e) => { e.stopPropagation(); onEditProject(project); }}
-            className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-white rounded-xl transition-all shadow-md shrink-0"
-            title="แก้ไขโครงการ"
-          >
-            <Edit2 className="w-3.5 h-3.5" />
-          </button>
+          {userRole !== 'manager' && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); onEditProject(project); }}
+              className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-white rounded-xl transition-all shadow-md shrink-0"
+              title="แก้ไขโครงการ"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </motion.div>
     </>

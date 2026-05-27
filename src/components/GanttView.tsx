@@ -24,6 +24,8 @@ import { db } from '../lib/firebase';
 
 import { collection, onSnapshot, query, setDoc, doc, deleteDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
+import { showToast, showErrorToast } from '../lib/toast';
+
 
 interface GanttViewProps {
   project: ProjectInfo;
@@ -848,8 +850,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       await updateDoc(doc(db, 'projects', project.id), {
         [field]: value
       });
+      showToast("บันทึกข้อมูลโครงการสำเร็จ", "success");
     } catch (e) {
-      console.error("Error updating project info:", e);
+      showErrorToast(e, "ไม่สามารถบันทึกข้อมูลโครงการได้");
     }
   };
 
@@ -1125,8 +1128,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
         ...cat,
         [field]: value
       });
+      showToast("บันทึกข้อมูลหมวดหมู่สำเร็จ", "success");
     } catch (e) {
-      console.error("Error updating category meta:", e);
+      showErrorToast(e, "ไม่สามารถบันทึกข้อมูลหมวดหมู่ได้");
     }
   };
 
@@ -1138,8 +1142,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
         ...task,
         [field]: value
       });
+      showToast("บันทึกข้อมูลงานสำเร็จ", "success");
     } catch (e) {
-      console.error("Error updating task:", e);
+      showErrorToast(e, "ไม่สามารถบันทึกข้อมูลงานได้");
     }
   };
 
@@ -1164,9 +1169,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       }
       
       await batch.commit();
+      showToast("แก้ไขชื่อหมวดหมู่สำเร็จ", "success");
     } catch (e) {
-      console.error("Error updating category:", e);
-      alert('ไม่สามารถแก้ไขชื่อหมวดหมู่ได้');
+      showErrorToast(e, "ไม่สามารถแก้ไขชื่อหมวดหมู่ได้");
     } finally {
       setIsProcessing(false);
     }
@@ -1209,8 +1214,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
         ...task,
         dailyActual: currentData
       });
+      showToast("บันทึกปริมาณงานจริงสำเร็จ", "success");
     } catch (e) {
-      console.error("Error updating actual value:", e);
+      showErrorToast(e, "ไม่สามารถบันทึกปริมาณงานจริงได้");
     }
   };
 
@@ -1239,8 +1245,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
         ...task,
         dailyProgress: currentData
       });
+      showToast("อัปเดตแผนงานสำเร็จ", "success");
     } catch (e) {
-      console.error("Error updating plan:", e);
+      showErrorToast(e, "ไม่สามารถอัปเดตแผนงานได้");
     }
   };
 
@@ -1263,8 +1270,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
     };
     try {
       await setDoc(doc(db, 'projects', project.id, 'tasks', newId), newTask);
+      showToast("เพิ่มรายการงานสำเร็จ", "success");
     } catch (e) {
-      console.error("Error adding task:", e);
+      showErrorToast(e, "ไม่สามารถเพิ่มรายการงานได้");
     }
   };
 
@@ -1275,9 +1283,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       if (taskToDelete?.id === taskId) {
         setTaskToDelete(null);
       }
+      showToast("ลบรายการงานสำเร็จ", "success");
     } catch (e) {
-      console.error("Error deleting task:", e);
-      alert('ไม่สามารถลบรายการงานนี้ได้');
+      showErrorToast(e, "ไม่สามารถลบรายการงานได้");
     } finally {
       setIsProcessing(false);
     }
@@ -1291,7 +1299,7 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
     const activeDailyPlanIndices = Object.keys(dailyProgress).filter(idx => (dailyProgress[Number(idx)] || 0) > 0).map(Number);
     
     if (activeDailyPlanIndices.length === 0) {
-      alert('Please define a PLAN (blue boxes) first for this task before using Auto-Fill.');
+      showToast('กรุณากำหนดแผนงาน (กล่องสีน้ำเงิน) สำหรับงานนี้ก่อนใช้ Auto-Fill', 'info');
       return;
     }
 
@@ -1320,8 +1328,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
         ...task,
         dailyActual: newActualData
       });
+      showToast("Auto-Fill ความคืบหน้าสำเร็จ", "success");
     } catch (e) {
-      console.error("Error auto-filling actual:", e);
+      showErrorToast(e, "ไม่สามารถบันทึก Auto-Fill ได้");
     }
   };
 
@@ -1349,8 +1358,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       
       setNewCategoryName('');
       setIsAddingCategory(false);
+      showToast("เพิ่มหมวดหมู่สำเร็จ", "success");
     } catch (e) {
-      console.error("Error adding category:", e);
+      showErrorToast(e, "ไม่สามารถเพิ่มหมวดหมู่ได้");
     } finally {
       setIsProcessing(false);
     }
@@ -1388,9 +1398,9 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       
       await batch.commit();
       setCatToDelete(null);
+      showToast("ลบหมวดหมู่และรายการสำเร็จ", "success");
     } catch (e) {
-      console.error("Error deleting category or tasks:", e);
-      alert('ไม่สามารถลบหัวข้อได้ โปรดลองอีกครั้ง');
+      showErrorToast(e, "ไม่สามารถลบหัวข้อได้");
     } finally {
       setIsProcessing(false);
     }

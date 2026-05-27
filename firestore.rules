@@ -36,7 +36,7 @@ service cloud.firestore {
              data.name is string && data.name.size() <= 200 &&
              data.contractor is string && data.contractor.size() <= 200 &&
              data.ownerId is string &&
-             (!('budget' in data) || data.budget is string) &&
+             (!('budget' in data) || data.budget is string || data.budget is number) &&
              (!('startDate' in data) || data.startDate is string) &&
              (!('endDate' in data) || data.endDate is string) &&
              (!('memberIds' in data) || data.memberIds is list);
@@ -55,6 +55,7 @@ service cloud.firestore {
       allow list, get: if isSignedIn(); // Allow searching users
       allow create: if isOwner(userId) && isValidUser(request.resource.data);
       allow update: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role;
+      allow delete: if isOwner(userId);
     }
 
     match /projects/{projectId} {
@@ -62,7 +63,7 @@ service cloud.firestore {
       allow get: if canAccessProject(resource.data);
       allow create: if isSignedIn() && isValidProject(request.resource.data) && request.resource.data.ownerId == request.auth.uid;
       allow update: if canAccessProject(resource.data) && isValidProject(request.resource.data) && (resource.data.ownerId == request.auth.uid || request.resource.data.ownerId == resource.data.ownerId);
-      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow delete: if canAccessProject(resource.data) || (isSignedIn() && (!('ownerId' in resource.data) || resource.data.ownerId == ""));
 
       match /tasks/{taskId} {
         allow list: if isValidId(projectId) && canAccessProject(get(/databases/$(database)/documents/projects/$(projectId)).data);

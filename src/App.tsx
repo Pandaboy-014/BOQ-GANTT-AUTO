@@ -16,6 +16,9 @@ import { auth, db } from './lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, getDoc, or } from 'firebase/firestore';
 import OrientationOverlay from './components/OrientationOverlay.tsx';
+import ToastContainer from './components/Toast.tsx';
+import { showToast, showErrorToast } from './lib/toast.ts';
+
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
@@ -126,10 +129,11 @@ export default function App() {
       if (editingProject) {
         await setDoc(doc(db, 'projects', project.id), {
           ...project,
-          ownerId: user.uid,
+          ownerId: project.ownerId || editingProject.ownerId || user.uid,
           memberIds: project.memberIds || []
         }, { merge: true });
         setEditingProject(null);
+        showToast("แก้ไขโครงการสำเร็จ", "success");
       } else {
         const newProjectRef = doc(collection(db, 'projects'));
         await setDoc(newProjectRef, {
@@ -138,10 +142,33 @@ export default function App() {
           ownerId: user.uid,
           memberIds: []
         });
+        showToast("เพิ่มโครงการสำเร็จ", "success");
       }
       setCurrentView('dashboard');
     } catch (error) {
-      console.error("Error saving project:", error);
+      showErrorToast(error, "บันทึกโครงการไม่สำเร็จ");
+    }
+  };
+
+  const handleDeleteProject = async (project: ProjectInfo) => {
+    try {
+      const { writeBatch, collection, getDocs } = await import('firebase/firestore');
+      const batch = writeBatch(db);
+      
+      const tasksSnap = await getDocs(collection(db, 'projects', project.id, 'tasks'));
+      tasksSnap.docs.forEach((t) => {
+        batch.delete(t.ref);
+      });
+      
+      batch.delete(doc(db, 'projects', project.id));
+      
+      await batch.commit();
+      showToast("ลบโครงการเรียบร้อยแล้ว", "success");
+      setEditingProject(null);
+      setCurrentView('dashboard');
+    } catch (err: any) {
+      console.error("Error deleting project:", err);
+      showErrorToast(err, "ไม่สามารถลบโครงการได้");
     }
   };
 
@@ -194,6 +221,7 @@ export default function App() {
               }}
               onLogout={handleLogout}
               onNavigateProfile={() => setCurrentView('profile')}
+              userRole={userRole}
             />
           </motion.div>
         )}
@@ -224,6 +252,7 @@ export default function App() {
                 setEditingProject(null);
                 setCurrentView('dashboard');
               }}
+              onDelete={handleDeleteProject}
               projectToEdit={editingProject}
             />
           </motion.div>
@@ -246,6 +275,7 @@ export default function App() {
         )}
       </AnimatePresence>
       <OrientationOverlay />
+      <ToastContainer />
     </div>
   );
 }

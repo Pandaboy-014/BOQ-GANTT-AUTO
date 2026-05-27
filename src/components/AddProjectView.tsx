@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, 
   Save, 
@@ -14,7 +14,9 @@ import {
   AlertCircle,
   Upload,
   ImageIcon,
-  Link
+  Link,
+  X,
+  Trash
 } from 'lucide-react';
 import { ProjectInfo } from '../types.ts';
 import { differenceInDays, format, parseISO } from 'date-fns';
@@ -23,10 +25,12 @@ import { th } from 'date-fns/locale';
 interface AddProjectViewProps {
   onSave: (project: ProjectInfo) => void;
   onCancel: () => void;
+  onDelete?: (project: ProjectInfo) => void;
   projectToEdit?: ProjectInfo | null;
 }
 
-export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddProjectViewProps) {
+export default function AddProjectView({ onSave, onCancel, onDelete, projectToEdit }: AddProjectViewProps) {
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const defaultData = {
     name: '',
     contractor: '',
@@ -98,11 +102,22 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {projectToEdit && onDelete && (
+            <button 
+              type="button"
+              onClick={() => setShowConfirmDelete(true)}
+              className="flex items-center gap-3 px-6 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-500 border border-rose-500/20 transition-all shadow-lg"
+            >
+              <Trash2 className="w-4 h-4" />
+              ลบโครงการ
+            </button>
+          )}
           <button 
+            type="button"
             onClick={onCancel}
-            className="flex items-center gap-3 px-6 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-rose-500/5 text-rose-500 border border-rose-500/10 hover:bg-rose-500/15 transition-all"
+            className="flex items-center gap-3 px-6 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-white transition-all"
           >
-            <Trash2 className="w-4 h-4 opacity-70" />
+            <X className="w-4 h-4 opacity-70" />
             ยกเลิก
           </button>
           <button 
@@ -296,6 +311,56 @@ export default function AddProjectView({ onSave, onCancel, projectToEdit }: AddP
           </section>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showConfirmDelete && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-slate-900 border border-rose-500/20 rounded-[40px] w-full max-w-md overflow-hidden shadow-2xl"
+            >
+              <div className="p-10 text-center space-y-6">
+                <div className="w-20 h-20 bg-rose-500/10 rounded-3xl flex items-center justify-center mx-auto border border-rose-500/20">
+                  <Trash className="w-10 h-10 text-rose-500" />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold text-white uppercase tracking-normal">ยืนยันการลบโครงการ?</h3>
+                  <p className="text-slate-200 mt-2 leading-relaxed opacity-90 text-sm">
+                    ข้อมูลทั้งหมดของโครงการ <span className="text-white font-bold">"{formData.name}"</span> จะถูกลบถาวร รวมถึงแผนงานและข้อมูลทั้งหมด
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3 pt-4 font-sans">
+                  <button 
+                    onClick={() => {
+                      if (onDelete && projectToEdit) {
+                        onDelete(projectToEdit);
+                      }
+                      setShowConfirmDelete(false);
+                    }}
+                    className="w-full py-4 bg-rose-500 hover:bg-rose-600 font-bold rounded-2xl transition-all shadow-xl shadow-rose-500/20 text-sm text-white"
+                  >
+                    ยืนยัน ลบโครงการถาวร
+                  </button>
+                  <button 
+                    onClick={() => setShowConfirmDelete(false)}
+                    className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-2xl transition-all text-sm"
+                  >
+                    ยกเลิก
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <style>{`
         .color-scheme-dark { color-scheme: dark; }
       `}</style>
