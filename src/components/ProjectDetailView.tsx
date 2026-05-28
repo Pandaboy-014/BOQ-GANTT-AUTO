@@ -2391,22 +2391,22 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-6"
+            className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
           >
             <motion.div 
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}
-              className="bg-slate-900 border border-white/10 rounded-[40px] w-full max-w-lg overflow-hidden shadow-2xl"
+              className="bg-slate-900 border border-white/10 rounded-[28px] sm:rounded-[40px] w-full max-w-lg flex flex-col max-h-[90vh] sm:max-h-[85vh] overflow-hidden shadow-2xl"
             >
-              <div className="p-8 border-b border-white/5 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-indigo-500/10 rounded-2xl">
-                    <Users className="w-6 h-6 text-indigo-500" />
+              <div className="p-5 sm:p-8 border-b border-white/5 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="p-2.5 sm:p-3 bg-indigo-500/10 rounded-2xl">
+                    <Users className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-500" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold text-white uppercase tracking-normal">MANAGE TEAM</h3>
-                    <p className="text-sm text-slate-200 font-bold uppercase tracking-widest opacity-90">เพิ่มสมาชิกเข้าสู่โครงการ</p>
+                    <h3 className="text-lg sm:text-xl font-bold text-white uppercase tracking-normal">MANAGE TEAM</h3>
+                    <p className="text-xs sm:text-sm text-slate-200 font-bold uppercase tracking-widest opacity-90">เพิ่มสมาชิกเข้าสู่โครงการ</p>
                   </div>
                 </div>
                 <button 
@@ -2417,7 +2417,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                 </button>
               </div>
 
-              <div className="p-8 space-y-8">
+              <div className="p-5 sm:p-8 space-y-6 sm:space-y-8 overflow-y-auto flex-1 custom-scrollbar">
                 {userRole !== 'manager' && (
                   <>
                     <form onSubmit={handleSearchUser} className="space-y-4">
