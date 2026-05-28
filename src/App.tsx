@@ -28,6 +28,7 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
   const [editingProject, setEditingProject] = useState<ProjectInfo | null>(null);
   const [projectsList, setProjectsList] = useState<ProjectInfo[]>([]);
+  const [selectedProvince, setSelectedProvince] = useState<string>('');
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -222,6 +223,8 @@ export default function App() {
               onLogout={handleLogout}
               onNavigateProfile={() => setCurrentView('profile')}
               userRole={userRole}
+              selectedProvince={selectedProvince}
+              onSelectProvince={setSelectedProvince}
             />
           </motion.div>
         )}

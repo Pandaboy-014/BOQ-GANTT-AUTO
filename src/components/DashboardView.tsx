@@ -9,6 +9,7 @@ import {
   LogOut, 
   Search,
   ChevronRight,
+  ChevronDown,
   Construction,
   Building,
   Clock,
@@ -507,16 +508,58 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
 
   const text = await response.text();
   let json: any;
-  try {
-    json = JSON.parse(text);
-  } catch (e) {
-    const startIdx = text.indexOf('{');
-    const endIdx = text.lastIndexOf('}');
-    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-      json = JSON.parse(text.substring(startIdx, endIdx + 1));
-    } else {
-      throw new Error("Invalid structure");
+
+  const cleanAndParseJSON = (rawText: string): any => {
+    let cleaned = rawText.trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch (initialErr) {
+      // Extract the first JSON object or array
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      const firstBracket = cleaned.indexOf('[');
+      const lastBracket = cleaned.lastIndexOf(']');
+      
+      let startIdx = -1;
+      let endIdx = -1;
+      
+      if (firstBrace !== -1 && lastBrace !== -1) {
+        if (firstBracket !== -1 && firstBracket < firstBrace && lastBracket !== -1 && lastBracket > lastBrace) {
+          startIdx = firstBracket;
+          endIdx = lastBracket;
+        } else {
+          startIdx = firstBrace;
+          endIdx = lastBrace;
+        }
+      } else if (firstBracket !== -1 && lastBracket !== -1) {
+        startIdx = firstBracket;
+        endIdx = lastBracket;
+      }
+      
+      if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+        cleaned = cleaned.substring(startIdx, endIdx + 1);
+      }
+
+      try {
+        return JSON.parse(cleaned);
+      } catch (extractErr) {
+        // Strip single-line and multi-line comments
+        cleaned = cleaned.replace(/\/\/.*$/gm, '');
+        cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, '');
+        // Fix unquoted keys
+        cleaned = cleaned.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+        // Remove trailing commas before closing braces/brackets
+        cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+        
+        return JSON.parse(cleaned);
+      }
     }
+  };
+
+  try {
+    json = cleanAndParseJSON(text);
+  } catch (e: any) {
+    throw new Error(`Invalid structure (${e.message})`);
   }
 
   if (json.status !== "success" || !json.data?.summary) {
@@ -581,9 +624,21 @@ interface DashboardViewProps {
   onLogout: () => void;
   onNavigateProfile: () => void;
   userRole?: 'manager' | 'engineer' | null;
+  selectedProvince: string;
+  onSelectProvince: (province: string) => void;
 }
 
-export default function DashboardView({ projects, onSelectProject, onEditProject, onAddProject, onLogout, onNavigateProfile, userRole }: DashboardViewProps) {
+export default function DashboardView({ 
+  projects, 
+  onSelectProject, 
+  onEditProject, 
+  onAddProject, 
+  onLogout, 
+  onNavigateProfile, 
+  userRole,
+  selectedProvince,
+  onSelectProvince
+}: DashboardViewProps) {
   const user = auth.currentUser;
   const [realtimeDataMap, setRealtimeDataMap] = useState<Record<string, RealtimeProjectData>>({});
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
@@ -591,6 +646,33 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'projects' | 'calendar'>('projects');
+
+  const availableProvinces = React.useMemo(() => {
+    const provinceSet = new Set<string>();
+    let hasUnspecified = false;
+    projects.forEach(p => {
+      if (!p.province || p.province.trim() === '' || p.province === 'ไม่ระบุจังหวัด') {
+        hasUnspecified = true;
+      } else {
+        provinceSet.add(p.province.trim());
+      }
+    });
+    const sorted = Array.from(provinceSet).sort((a, b) => a.localeCompare(b, 'th'));
+    if (hasUnspecified) {
+      sorted.push('ไม่ระบุจังหวัด');
+    }
+    return sorted;
+  }, [projects]);
+
+  const selectedProvinceProjects = React.useMemo(() => {
+    if (!selectedProvince) return [];
+    return projects.filter(p => {
+      if (selectedProvince === 'ไม่ระบุจังหวัด') {
+        return !p.province || p.province.trim() === '' || p.province === 'ไม่ระบุจังหวัด';
+      }
+      return p.province?.trim() === selectedProvince;
+    });
+  }, [projects, selectedProvince]);
 
   // Centralized parallel fetching logic with progressive updates
   const loadAllProjects = React.useCallback(async (force = false) => {
@@ -734,9 +816,9 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
     // Simple average progressive tracking
     let totalActualProgress = 0;
     let totalPlanProgress = 0;
-    const numberOfProjects = projects.length || 1;
+    const numberOfProjects = selectedProvinceProjects.length || 1;
 
-    projects.forEach(project => {
+    selectedProvinceProjects.forEach(project => {
       const realtime = realtimeDataMap[project.id];
       if (realtime) {
         totalBudget += realtime.budget;
@@ -806,11 +888,11 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
       overallProgressPlan: averagePlan,
       totalNetAllProjects
     };
-  }, [projects, realtimeDataMap]);
+  }, [selectedProvinceProjects, realtimeDataMap]);
 
   const allMonths = React.useMemo(() => {
     const allMonthsSet = new Set<string>();
-    projects.forEach(p => {
+    selectedProvinceProjects.forEach(p => {
       const rt = realtimeDataMap[p.id];
       if (rt && rt.monthlyDeductions) {
         rt.monthlyDeductions.forEach(item => {
@@ -822,7 +904,7 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
       }
     });
     return Array.from(allMonthsSet).sort((a, b) => parseThaiMonthToSortValue(b) - parseThaiMonthToSortValue(a));
-  }, [projects, realtimeDataMap]);
+  }, [selectedProvinceProjects, realtimeDataMap]);
 
   const defaultMonth = React.useMemo(() => {
     return allMonths.find(m => normalizeMonth(m) === normalizeMonth(getCurrentThaiMonth())) || allMonths[0] || "";
@@ -835,7 +917,7 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
     if (!activeMonth) return 0;
     let sum = 0;
     const targetNorm = normalizeMonth(activeMonth);
-    projects.forEach(p => {
+    selectedProvinceProjects.forEach(p => {
       const rt = realtimeDataMap[p.id];
       if (rt && rt.monthlyDeductions) {
         const item = rt.monthlyDeductions.find(d => normalizeMonth(d.month) === targetNorm);
@@ -845,11 +927,11 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
       }
     });
     return sum;
-  }, [projects, realtimeDataMap, activeMonth]);
+  }, [selectedProvinceProjects, realtimeDataMap, activeMonth]);
 
   const totalMaterialTotalAllProjects = React.useMemo(() => {
     let grandTotal = 0;
-    projects.forEach(p => {
+    selectedProvinceProjects.forEach(p => {
       const rt = realtimeDataMap[p.id];
       if (rt) {
         const md = rt.monthlyDeductions || [];
@@ -881,7 +963,7 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
       }
     });
     return grandTotal;
-  }, [projects, realtimeDataMap]);
+  }, [selectedProvinceProjects, realtimeDataMap]);
 
   const selectedMonthPlanAndActualSum = React.useMemo(() => {
     if (!activeMonth) return { planAmount: 0, actualAmount: 0 };
@@ -889,7 +971,7 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
     let totalActualAmt = 0;
     const { monthIndex, thaiYear } = parseMonthYearFromLabel(activeMonth);
 
-    projects.forEach(p => {
+    selectedProvinceProjects.forEach(p => {
       const rt = realtimeDataMap[p.id];
       if (rt) {
         const budgetVal = rt.budget || parseFloat(p.budget?.toString().replace(/[^0-9.]/g, '') || "0");
@@ -919,10 +1001,10 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
       planAmount: totalPlanAmt,
       actualAmount: totalActualAmt
     };
-  }, [projects, realtimeDataMap, activeMonth]);
+  }, [selectedProvinceProjects, realtimeDataMap, activeMonth]);
 
   const filteredProjects = React.useMemo(() => {
-    const list = [...projects];
+    const list = [...selectedProvinceProjects];
     list.sort((a, b) => {
       const rtA = realtimeDataMap[a.id];
       const rtB = realtimeDataMap[b.id];
@@ -941,7 +1023,7 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
       p.contractor?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.location?.toLowerCase().includes(searchQuery.toLowerCase())
     );
-  }, [projects, searchQuery, realtimeDataMap]);
+  }, [selectedProvinceProjects, searchQuery, realtimeDataMap]);
 
   // ON TARGET if overall progressive actual avg is >= plan avg
   const isTargetMet = masterSummary.overallProgress >= masterSummary.overallProgressPlan;
@@ -1050,206 +1132,260 @@ export default function DashboardView({ projects, onSelectProject, onEditProject
             <ProjectCalendar />
           ) : (
             <>
+              {/* Province Selector Dropdown Bar */}
+              <div className="bg-[#0f1420]/50 border border-white/5 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-fade-in mb-6">
+                <div className="flex items-center gap-3.5 border-b border-white/5 pb-4 sm:pb-0 sm:border-0 w-full sm:w-auto">
+                  <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-indigo-400">
+                    <MapPin className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-white">เลือกจังหวัดเพื่อเปิดข้อมูลโครงการ</h4>
+                    <p className="text-[10px] text-slate-400 font-light mt-0.5 uppercase tracking-wide">Filter Projects by Province</p>
+                  </div>
+                </div>
+                <div className="relative w-full sm:w-[280px]">
+                  <select
+                    value={selectedProvince}
+                    onChange={(e) => onSelectProvince(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 hover:border-white/20 rounded-2xl p-4 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all font-sans text-sm tracking-tight appearance-none cursor-pointer pr-10"
+                  >
+                    <option value="" className="bg-[#0f1420] text-slate-400">-- เลือกจังหวัด --</option>
+                    {availableProvinces.map(p => (
+                      <option key={p} value={p} className="bg-[#0f1420] text-white">
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
+                    <ChevronDown className="h-4 w-4" />
+                  </div>
+                </div>
+              </div>
+
               <header>
-            <div className="bg-gradient-to-br from-[#2a3eb1] to-[#1e2a8a] py-5 px-6 sm:py-6 sm:px-8 rounded-[24px] sm:rounded-[32px] shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="absolute top-1/2 -translate-y-1/2 right-4 p-4 opacity-5 pointer-events-none">
-                <Building className="w-32 h-32 sm:w-48 sm:h-48 text-white" />
-              </div>
-              <div className="relative z-10 space-y-1.5 flex-1">
-                <h2 className="text-xl sm:text-2xl font-semibold text-white uppercase tracking-tight leading-tight">ระบบควบคุมงานก่อสร้าง</h2>
-                <p className="text-blue-200 text-xs sm:text-sm font-light opacity-80 uppercase tracking-tight">B IDEA CONSTRUCTION COMPANY LIMITED</p>
-              </div>
-              <div className="relative z-10 flex items-center sm:text-right sm:justify-end gap-3 bg-white/5 border border-white/10 px-4 py-2 rounded-2xl w-fit">
-                <span className="text-2xl sm:text-3xl font-bold text-white leading-none font-mono">{projects.length}</span>
-                <div className="flex flex-col text-left">
-                  <span className="text-[10px] sm:text-[11px] font-normal text-blue-200 uppercase tracking-tight opacity-85 leading-tight">โครงการที่กำลังดำเนินการ</span>
-                </div>
-              </div>
-            </div>
-          </header>
-
-          {/* ALL PROJECTS SUMMARY section */}
-          <section className="space-y-6 animate-fade-in">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/5 pb-4 gap-4">
-              <div className="space-y-1">
-                <h3 className="text-xl sm:text-2xl font-light text-white uppercase tracking-tight">สรุปยอดทุกโครงการ</h3>
-                <p className="text-[10px] font-normal text-slate-300 uppercase tracking-[0.2em] leading-none opacity-80">ALL PROJECTS SUMMARY</p>
-              </div>
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="flex items-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-xs font-light tracking-wider text-slate-200 hover:text-white transition-all shadow-xl uppercase disabled:opacity-40 w-full sm:w-auto justify-center"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${isRefreshing ? 'animate-spin' : ''}`} />
-                {isRefreshing ? 'กำลังปรับปรุง...' : 'รีเฟรชข้อมูล'}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
-              {/* Card 1: Total Budget Summary */}
-              <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col justify-between hover:border-cyan-500/30 hover:shadow-cyan-500/5 transition-all duration-300 space-y-3">
-                <div className="flex justify-between items-start gap-2">
-                  <div className="space-y-0.5">
-                    <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider">สรุปงบประมาณรวม</p>
-                    <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight leading-none">TOTAL BUDGET SUMMARY</p>
+                <div className="bg-gradient-to-br from-[#2a3eb1] to-[#1e2a8a] py-5 px-6 sm:py-6 sm:px-8 rounded-[24px] sm:rounded-[32px] shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="absolute top-1/2 -translate-y-1/2 right-4 p-4 opacity-5 pointer-events-none">
+                    <Building className="w-32 h-32 sm:w-48 sm:h-48 text-white" />
                   </div>
-                  <div className="p-2.5 bg-cyan-500/10 rounded-2xl border border-cyan-500/20 text-cyan-400">
-                    <Construction className="w-4 h-4" />
+                  <div className="relative z-10 space-y-1.5 flex-1">
+                    <h2 className="text-xl sm:text-2xl font-semibold text-white uppercase tracking-tight leading-tight">ระบบควบคุมงานก่อสร้าง</h2>
+                    <p className="text-blue-200 text-xs sm:text-sm font-light opacity-80 uppercase tracking-tight">B IDEA CONSTRUCTION COMPANY LIMITED</p>
                   </div>
-                </div>
-                
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex justify-between items-center border-b border-white/5 pb-1">
-                    <span className="text-[11px] font-light text-slate-200">งบรวมทุกโครงการ:</span>
-                    <span className="text-sm sm:text-base font-semibold text-cyan-400 font-mono">
-                      ฿{masterSummary.totalBudget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div className="relative z-10 flex items-center sm:text-right sm:justify-end gap-3 bg-white/5 border border-white/10 px-4 py-2 rounded-2xl w-fit">
+                    <span className="text-2xl sm:text-3xl font-bold text-white leading-none font-mono">
+                      {selectedProvince ? selectedProvinceProjects.length : projects.length}
                     </span>
-                  </div>
-                  <div className="flex justify-between items-center border-b border-white/5 pb-1">
-                    <span className="text-[11px] font-light text-slate-200">เบิกสะสมรวม:</span>
-                    <span className="text-sm sm:text-base font-semibold text-emerald-400 font-mono">
-                      ฿{masterSummary.totalCumIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[11px] font-light text-slate-200">เหลือเบิกรวม:</span>
-                    <span className="text-sm sm:text-base font-semibold text-orange-400 font-mono">
-                      ฿{masterSummary.remainingPayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-end pt-0.5 leading-none">
-                    <span className="text-[9px] text-slate-400 font-light opacity-60">
-                      (ไม่รวม Vat 7%)
-                    </span>
+                    <div className="flex flex-col text-left">
+                      <span className="text-[10px] sm:text-[11px] font-normal text-blue-200 uppercase tracking-tight opacity-85 leading-tight">
+                        {selectedProvince ? `โครงการใน${selectedProvince}` : "โครงการที่กำลังดำเนินการ"}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </header>
 
-              {/* Card 2: Cumulative Expenditures Summary */}
-              <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col hover:border-emerald-500/30 hover:shadow-emerald-500/5 transition-all duration-300 space-y-3">
-                <div className="flex justify-between items-start gap-2">
-                  <div className="space-y-0.5 flex-1 min-w-0">
-                    <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider truncate">รวมค่าใช้จ่ายสะสมทุกโครงการ (ไม่รวม Vat 7%)</p>
-                    <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight truncate leading-none">TOTAL ACCUMULATED EXPENDITURES</p>
+              {!selectedProvince ? (
+                <div className="flex flex-col items-center justify-center p-12 sm:p-24 bg-[#0f1420]/40 border border-white/5 rounded-[32px] shadow-2xl space-y-6 animate-fade-in text-center my-8">
+                  <div className="w-24 h-24 bg-[#6366f1]/10 rounded-[40px] flex items-center justify-center border border-[#6366f1]/20 text-[#6366f1]">
+                    <MapPin className="w-10 h-10 animate-pulse" />
                   </div>
-                  <div className="p-2.5 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 text-[#00FF87] flex-shrink-0">
-                    <Building className="w-4 h-4" />
-                  </div>
-                </div>
-                <div className="flex-1 flex flex-col justify-center items-center text-center py-4">
-                  <p className="text-xl sm:text-2xl font-semibold text-emerald-400 tracking-tight leading-none break-all font-mono">
-                    ฿{totalMaterialTotalAllProjects.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                  <p className="text-[10px] text-slate-300 font-light mt-2 uppercase tracking-wide leading-tight opacity-80">
-                    รวมค่าเหล็ก/คอนกรีต และวัสดุ ทุกเดือนทุกโครงการ
-                  </p>
-                </div>
-              </div>
-
-              {/* Card 3: Monthly Withdrawal Plan vs Actual */}
-              <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-4 sm:p-4.5 shadow-2xl flex flex-col hover:border-indigo-500/30 hover:shadow-indigo-500/5 transition-all duration-300 space-y-2">
-                <div className="flex justify-between items-center gap-2 w-full border-b border-white/5 pb-1.5">
-                  <div className="space-y-0.5 text-left flex-1 min-w-0">
-                    <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider truncate">แผนเบิกประจำเดือน</p>
-                    <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight leading-none truncate">MONTHLY WITHDRAWAL PLAN</p>
-                  </div>
-                  <div className="relative shrink-0">
-                    <select
-                      value={activeMonth}
-                      onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="bg-slate-900 border border-white/20 rounded-xl px-2.5 py-0.5 text-[10px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/35 hover:bg-slate-950 transition-all font-light"
-                    >
-                      {allMonths.length === 0 ? (
-                        <option value="">ไม่มีข้อมูลเดือน</option>
-                      ) : (
-                        allMonths.map((m) => (
-                           <option key={m} value={m} className="bg-[#0f1420] text-slate-100">
-                             {m}
-                           </option>
-                        ))
-                      )}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-2 pt-1 flex-1 flex flex-col justify-center">
-                  <div className="text-center w-full space-y-0.5 bg-[#141b2e]/35 py-2 px-3 rounded-xl border border-white/5">
-                    <p className="text-[10px] sm:text-[11px] font-medium text-cyan-400 uppercase tracking-wide">PLAN เบิกไว้</p>
-                    <p className="text-xs sm:text-sm md:text-base font-bold font-mono text-cyan-300">
-                      ฿{selectedMonthPlanAndActualSum.planAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                  <div className="text-center w-full space-y-0.5 bg-[#141b2e]/35 py-2 px-3 rounded-xl border border-white/5">
-                    <p className="text-[10px] sm:text-[11px] font-medium text-emerald-400 uppercase tracking-wide">ACTUAL ทำจริง</p>
-                    <p className="text-xs sm:text-sm md:text-base font-bold font-mono text-emerald-300">
-                      ฿{selectedMonthPlanAndActualSum.actualAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div className="space-y-2">
+                    <h3 className="text-2xl font-light text-white tracking-tight">กรุณาเลือกจังหวัด</h3>
+                    <p className="text-xs sm:text-sm text-slate-400 font-light max-w-sm tracking-wide leading-relaxed">
+                      โปรดเลือกจังหวัดจากแถบตัวกรองด้านบนเพื่อวิเคราะห์งบประมาณและตรวจสอบรายชื่อโครงการที่อยู่ภายใต้จังหวัดนั้นๆ
                     </p>
                   </div>
                 </div>
-              </div>
-            </div>
-          </section>
+              ) : (
+                <>
+                  {/* ALL PROJECTS SUMMARY section */}
+                  <section className="space-y-6 animate-fade-in mt-8">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/5 pb-4 gap-4">
+                      <div className="space-y-1">
+                        <h3 className="text-xl sm:text-2xl font-light text-white uppercase tracking-tight">สรุปยอดโครงการประจำจังหวัด</h3>
+                        <p className="text-[10px] font-normal text-slate-300 uppercase tracking-[0.2em] leading-none opacity-80">ALL PROJECTS SUMMARY</p>
+                      </div>
+                      <button
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-xs font-light tracking-wider text-slate-200 hover:text-white transition-all shadow-xl uppercase disabled:opacity-40 w-full sm:w-auto justify-center"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+                        {isRefreshing ? 'กำลังปรับปรุง...' : 'รีเฟรชข้อมูล'}
+                      </button>
+                    </div>
 
-          <section className="space-y-10">
-            <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-white/5 pb-8 gap-4">
-              <div className="flex justify-between items-center w-full md:w-auto">
-                <div className="space-y-2">
-                  <h3 className="text-3xl sm:text-4xl font-light text-white uppercase tracking-tight">รายชื่อโครงการ</h3>
-                  <p className="text-xs font-normal text-slate-400 uppercase tracking-[0.2em] leading-none opacity-60">Project Portfolio Management</p>
-                </div>
-                {userRole !== 'manager' && (
-                  <button
-                    onClick={onAddProject}
-                    className="md:hidden flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3.5 py-2.5 text-xs font-light transition-all shadow-lg shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
-                  >
-                    <Plus className="w-4 h-4" />
-                    เพิ่มโครงการ
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
-                <div className="relative flex-1 sm:flex-initial">
-                  <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input 
-                    placeholder="ค้นหาโครงการ..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-slate-900/50 border border-white/10 rounded-2xl py-3.5 pl-14 pr-8 text-white focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue/40 transition-all w-full md:min-w-[320px] shadow-inner font-light text-sm tracking-tight"
-                  />
-                </div>
-                {userRole !== 'manager' && (
-                  <button
-                    onClick={onAddProject}
-                    className="hidden md:flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-5 py-3.5 text-sm font-light transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap hover:scale-[1.02] active:scale-98"
-                  >
-                    <Plus className="w-4 h-4" />
-                    เพิ่มโครงการ
-                  </button>
-                )}
-              </div>
-            </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
+                      {/* Card 1: Total Budget Summary */}
+                      <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col justify-between hover:border-cyan-500/30 hover:shadow-cyan-500/5 transition-all duration-300 space-y-3">
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="space-y-0.5">
+                            <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider">สรุปงบประมาณรวม</p>
+                            <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight leading-none">TOTAL BUDGET SUMMARY</p>
+                          </div>
+                          <div className="p-2.5 bg-cyan-500/10 rounded-2xl border border-cyan-500/20 text-cyan-400">
+                            <Construction className="w-4 h-4" />
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-1.5 pt-1">
+                          <div className="flex justify-between items-center border-b border-white/5 pb-1">
+                            <span className="text-[11px] font-light text-slate-200 font-medium">งบรวม:</span>
+                            <span className="text-sm sm:text-base font-semibold text-cyan-400 font-mono">
+                              ฿{masterSummary.totalBudget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center border-b border-white/5 pb-1">
+                            <span className="text-[11px] font-light text-slate-200 font-medium font-medium">เบิกสะสม:</span>
+                            <span className="text-sm sm:text-base font-semibold text-emerald-400 font-mono">
+                              ฿{masterSummary.totalCumIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[11px] font-light text-slate-200 font-medium">เหลือเบิก:</span>
+                            <span className="text-sm sm:text-base font-semibold text-orange-400 font-mono">
+                              ฿{masterSummary.remainingPayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex justify-end pt-0.5 leading-none">
+                            <span className="text-[9px] text-slate-400 font-light opacity-60">
+                              (ไม่รวม Vat 7%)
+                            </span>
+                          </div>
+                        </div>
+                      </div>
 
-            <div className="flex flex-col gap-4 sm:gap-6 overflow-hidden">
-              {/* Existing Project Cards - loading states handled progressively */}
-              {filteredProjects.map((project) => {
-                const realtimeData = realtimeDataMap[project.id] || null;
-                const isLoading = loadingMap[project.id] === true;
+                      {/* Card 2: Cumulative Expenditures Summary */}
+                      <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col hover:border-emerald-500/30 hover:shadow-emerald-500/5 transition-all duration-300 space-y-3">
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="space-y-0.5 flex-1 min-w-0">
+                            <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider truncate">รวมค่าใช้จ่ายสะสม (ไม่รวม Vat 7%)</p>
+                            <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight truncate leading-none">TOTAL ACCUMULATED EXPENDITURES</p>
+                          </div>
+                          <div className="p-2.5 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 text-[#00FF87] flex-shrink-0">
+                            <Building className="w-4 h-4" />
+                          </div>
+                        </div>
+                        <div className="flex-1 flex flex-col justify-center items-center text-center py-4">
+                          <p className="text-xl sm:text-2xl font-semibold text-emerald-400 tracking-tight leading-none break-all font-mono">
+                            ฿{totalMaterialTotalAllProjects.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-[10px] text-slate-300 font-light mt-2 uppercase tracking-wide leading-tight opacity-80">
+                            รวมค่าเหล็ก/คอนกรีต และวัสดุ ทุกเดือน
+                          </p>
+                        </div>
+                      </div>
 
-                return (
-                  <ProjectCard 
-                    key={project.id}
-                    project={project}
-                    loading={isLoading}
-                    realtimeData={realtimeData}
-                    onSelectProject={onSelectProject}
-                    onEditProject={onEditProject}
-                    userRole={userRole}
-                  />
-                );
-              })}
-            </div>
-          </section>
-          </>
+                      {/* Card 3: Monthly Withdrawal Plan vs Actual */}
+                      <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-4 sm:p-4.5 shadow-2xl flex flex-col hover:border-indigo-500/30 hover:shadow-indigo-500/5 transition-all duration-300 space-y-2">
+                        <div className="flex justify-between items-center gap-2 w-full border-b border-white/5 pb-1.5">
+                          <div className="space-y-0.5 text-left flex-1 min-w-0">
+                            <p className="text-[11px] font-medium text-slate-200 uppercase tracking-wider truncate">แผนเบิกประจำเดือน</p>
+                            <p className="text-[10px] font-light text-slate-400 uppercase tracking-tight leading-none truncate">MONTHLY WITHDRAWAL PLAN</p>
+                          </div>
+                          <div className="relative shrink-0">
+                            <select
+                              value={activeMonth}
+                              onChange={(e) => setSelectedMonth(e.target.value)}
+                              className="bg-slate-900 border border-white/20 rounded-xl px-2.5 py-0.5 text-[10px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/35 hover:bg-slate-950 transition-all font-light"
+                            >
+                              {allMonths.length === 0 ? (
+                                <option value="">ไม่มีข้อมูลเดือน</option>
+                              ) : (
+                                allMonths.map((m) => (
+                                   <option key={m} value={m} className="bg-[#0f1420] text-slate-100">
+                                     {m}
+                                   </option>
+                                ))
+                              )}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 pt-1 flex-1 flex flex-col justify-center">
+                          <div className="text-center w-full space-y-0.5 bg-[#141b2e]/35 py-2 px-3 rounded-xl border border-white/5">
+                            <p className="text-[10px] sm:text-[11px] font-medium text-cyan-400 uppercase tracking-wide">PLAN เบิกไว้</p>
+                            <p className="text-xs sm:text-sm md:text-base font-bold font-mono text-cyan-300">
+                              ฿{selectedMonthPlanAndActualSum.planAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </p>
+                          </div>
+                          <div className="text-center w-full space-y-0.5 bg-[#141b2e]/35 py-2 px-3 rounded-xl border border-white/5">
+                            <p className="text-[10px] sm:text-[11px] font-medium text-emerald-400 uppercase tracking-wide">ACTUAL ทำจริง</p>
+                            <p className="text-xs sm:text-sm md:text-base font-bold font-mono text-emerald-300">
+                              ฿{selectedMonthPlanAndActualSum.actualAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="space-y-10 mt-14">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-white/5 pb-8 gap-4">
+                      <div className="flex justify-between items-center w-full md:w-auto">
+                        <div className="space-y-2">
+                          <h3 className="text-2xl sm:text-3xl font-light text-white uppercase tracking-tight">
+                            {selectedProvince === 'ไม่ระบุจังหวัด'
+                              ? `โครงการที่ไม่ระบุจังหวัด (${filteredProjects.length} โครงการ)`
+                              : `โครงการใน${selectedProvince} (${filteredProjects.length} โครงการ)`}
+                          </h3>
+                          <p className="text-xs font-normal text-slate-400 uppercase tracking-[0.2em] leading-none opacity-60">Project Portfolio Management</p>
+                        </div>
+                        {userRole !== 'manager' && (
+                          <button
+                            onClick={onAddProject}
+                            className="md:hidden flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3.5 py-2.5 text-xs font-light transition-all shadow-lg shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
+                          >
+                            <Plus className="w-4 h-4" />
+                            เพิ่มโครงการ
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
+                        <div className="relative flex-1 sm:flex-initial">
+                          <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                          <input 
+                            placeholder="ค้นหาโครงการ..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="bg-slate-900/50 border border-white/10 rounded-2xl py-3.5 pl-14 pr-8 text-white focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue/40 transition-all w-full md:min-w-[320px] shadow-inner font-light text-sm tracking-tight"
+                          />
+                        </div>
+                        {userRole !== 'manager' && (
+                          <button
+                            onClick={onAddProject}
+                            className="hidden md:flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-5 py-3.5 text-sm font-light transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap hover:scale-[1.02] active:scale-98"
+                          >
+                            <Plus className="w-4 h-4" />
+                            เพิ่มโครงการ
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-4 sm:gap-6 overflow-hidden">
+                      {/* Existing Project Cards - loading states handled progressively */}
+                      {filteredProjects.map((project) => {
+                        const realtimeData = realtimeDataMap[project.id] || null;
+                        const isLoading = loadingMap[project.id] === true;
+
+                        return (
+                          <ProjectCard 
+                            key={project.id}
+                            project={project}
+                            loading={isLoading}
+                            realtimeData={realtimeData}
+                            onSelectProject={onSelectProject}
+                            onEditProject={onEditProject}
+                            userRole={userRole}
+                          />
+                        );
+                      })}
+                    </div>
+                  </section>
+                </>
+              )}
+            </>
           )}
         </div>
       </main>

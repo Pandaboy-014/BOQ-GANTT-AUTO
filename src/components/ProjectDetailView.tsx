@@ -553,16 +553,58 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       }
       const text = await res.text();
       let parsedJson: any;
-      try {
-        parsedJson = JSON.parse(text);
-      } catch (e) {
-        const startIdx = text.indexOf('{');
-        const endIdx = text.lastIndexOf('}');
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          parsedJson = JSON.parse(text.substring(startIdx, endIdx + 1));
-        } else {
-          throw new Error("โครงสร้างข้อมูล JSON ไม่ถูกต้อง");
+      
+      const cleanAndParseJSON = (rawText: string): any => {
+        let cleaned = rawText.trim();
+        try {
+          return JSON.parse(cleaned);
+        } catch (initialErr) {
+          // Extract the first JSON object or array
+          const firstBrace = cleaned.indexOf('{');
+          const lastBrace = cleaned.lastIndexOf('}');
+          const firstBracket = cleaned.indexOf('[');
+          const lastBracket = cleaned.lastIndexOf(']');
+          
+          let startIdx = -1;
+          let endIdx = -1;
+          
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            if (firstBracket !== -1 && firstBracket < firstBrace && lastBracket !== -1 && lastBracket > lastBrace) {
+              startIdx = firstBracket;
+              endIdx = lastBracket;
+            } else {
+              startIdx = firstBrace;
+              endIdx = lastBrace;
+            }
+          } else if (firstBracket !== -1 && lastBracket !== -1) {
+            startIdx = firstBracket;
+            endIdx = lastBracket;
+          }
+          
+          if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+            cleaned = cleaned.substring(startIdx, endIdx + 1);
+          }
+
+          try {
+            return JSON.parse(cleaned);
+          } catch (extractErr) {
+            // Strip single-line and multi-line comments
+            cleaned = cleaned.replace(/\/\/.*$/gm, '');
+            cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, '');
+            // Fix unquoted keys
+            cleaned = cleaned.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+            // Remove trailing commas before closing braces/brackets
+            cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+            
+            return JSON.parse(cleaned);
+          }
         }
+      };
+
+      try {
+        parsedJson = cleanAndParseJSON(text);
+      } catch (e: any) {
+        throw new Error(`โครงสร้างข้อมูล JSON ไม่ถูกต้อง (${e.message})`);
       }
 
       if (parsedJson.status !== "success" || !parsedJson.data) {

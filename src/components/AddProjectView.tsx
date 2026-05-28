@@ -18,7 +18,7 @@ import {
   X,
   Trash
 } from 'lucide-react';
-import { ProjectInfo } from '../types.ts';
+import { ProjectInfo, THAI_PROVINCES } from '../types.ts';
 import { differenceInDays, format, parseISO } from 'date-fns';
 import { th } from 'date-fns/locale';
 
@@ -35,6 +35,7 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
     name: '',
     contractor: '',
     location: '',
+    province: '',
     imageUrl: '',
     apiUrl: '',
     editUrl: '',
@@ -60,6 +61,7 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
         apiUrl: projectToEdit.apiUrl || '',
         editUrl: projectToEdit.editUrl || '',
         location: projectToEdit.location || '',
+        province: projectToEdit.province || '',
         sheetId: projectToEdit.sheetId || '',
       });
     }
@@ -72,6 +74,7 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
       name: formData.name || '',
       contractor: formData.contractor || '',
       location: formData.location || '',
+      province: formData.province || '',
       imageUrl: formData.imageUrl || '',
       apiUrl: formData.apiUrl || '',
       editUrl: formData.editUrl || '',
@@ -167,7 +170,7 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
                   placeholder="Contracting Entity"
                 />
               </div>
-              <div className="space-y-3 col-span-1 md:col-span-2">
+              <div className="space-y-3">
                 <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">พิกัดสถานที่ติดตั้ง</label>
                 <input 
                   value={formData.location}
@@ -175,6 +178,26 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
                   className="w-full bg-slate-900/50 border border-white/5 rounded-2xl p-4 text-white focus:outline-none focus:ring-1 focus:ring-indigo-600/30 focus:border-indigo-600/40 transition-all placeholder:text-slate-700 font-light text-sm tracking-tight"
                   placeholder="Geographic Reference"
                 />
+              </div>
+              <div className="space-y-3">
+                <label className="text-[10px] font-light text-slate-200 uppercase tracking-tight ml-1 font-medium">จังหวัด (Province)</label>
+                <div className="relative">
+                  <select 
+                    value={formData.province || ''}
+                    onChange={e => setFormData({...formData, province: e.target.value})}
+                    className="w-full bg-slate-900/50 border border-white/5 rounded-2xl p-4 text-white focus:outline-none focus:ring-1 focus:ring-indigo-600/30 focus:border-indigo-600/40 transition-all font-light text-sm tracking-tight appearance-none cursor-pointer pr-10"
+                  >
+                    <option value="" className="bg-slate-900 text-slate-450">-- ไม่ระบุจังหวัด --</option>
+                    {THAI_PROVINCES.map(p => (
+                      <option key={p} value={p} className="bg-slate-900 text-white">{p}</option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
+                    <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                      <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                    </svg>
+                  </div>
+                </div>
               </div>
               
               <div className="space-y-4 col-span-1 md:col-span-2">

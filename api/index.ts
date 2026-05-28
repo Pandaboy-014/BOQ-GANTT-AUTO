@@ -36,23 +36,58 @@ app.get('/api/proxy', async (req: express.Request, res: express.Response) => {
       return res.status(response.status).json({ error: errorMessage, details: text.substring(0, 500) });
     }
 
-    try {
-      const json = JSON.parse(text);
-      return res.json(json);
-    } catch (e) {
-      // Try to extract gviz/tq JSON padding if it's wrapped
+    // Robust cleaning and parsing function
+    const cleanAndParseJSON = (rawText: string): any => {
+      let cleaned = rawText.trim();
       try {
-        const startIdx = text.indexOf('{');
-        const endIdx = text.lastIndexOf('}');
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          const cleanedText = text.substring(startIdx, endIdx + 1);
-          const json = JSON.parse(cleanedText);
-          return res.json(json);
+        return JSON.parse(cleaned);
+      } catch (initialErr) {
+        // Extract the first JSON object or array
+        const firstBrace = cleaned.indexOf('{');
+        const lastBrace = cleaned.lastIndexOf('}');
+        const firstBracket = cleaned.indexOf('[');
+        const lastBracket = cleaned.lastIndexOf(']');
+        
+        let startIdx = -1;
+        let endIdx = -1;
+        
+        if (firstBrace !== -1 && lastBrace !== -1) {
+          if (firstBracket !== -1 && firstBracket < firstBrace && lastBracket !== -1 && lastBracket > lastBrace) {
+            startIdx = firstBracket;
+            endIdx = lastBracket;
+          } else {
+            startIdx = firstBrace;
+            endIdx = lastBrace;
+          }
+        } else if (firstBracket !== -1 && lastBracket !== -1) {
+          startIdx = firstBracket;
+          endIdx = lastBracket;
         }
-      } catch (innerErr) {
-        // Ignore and proceed to main error handling
-      }
+        
+        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+          cleaned = cleaned.substring(startIdx, endIdx + 1);
+        }
 
+        try {
+          return JSON.parse(cleaned);
+        } catch (extractErr) {
+          // Strip single-line and multi-line comments
+          cleaned = cleaned.replace(/\/\/.*$/gm, '');
+          cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, '');
+          // Fix unquoted keys
+          cleaned = cleaned.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+          // Remove trailing commas before closing braces/brackets
+          cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+          
+          return JSON.parse(cleaned);
+        }
+      }
+    };
+
+    try {
+      const json = cleanAndParseJSON(text);
+      return res.json(json);
+    } catch (e: any) {
       if (text.includes('<!DOCTYPE html>') || text.includes('<html')) {
         return res.status(422).json({ 
           error: "ได้รับข้อมูลเป็น HTML แทนที่จะเป็น JSON. โปรดตรวจสอบว่าได้เผยแพร่ Google Apps Script แบบ 'Anyone' และ URL ถูกต้อง",
@@ -61,7 +96,7 @@ app.get('/api/proxy', async (req: express.Request, res: express.Response) => {
       }
       
       return res.status(422).json({ 
-        error: "ข้อมูลที่ได้รับจาก URL ไม่ใช่รูปแบบ JSON ที่ถูกต้อง",
+        error: `ข้อมูลที่ได้รับจาก URL ไม่ใช่รูปแบบ JSON ที่ถูกต้อง (${e.message})`,
         details: text.substring(0, 200)
       });
     }

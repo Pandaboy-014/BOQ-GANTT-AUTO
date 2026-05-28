@@ -35,6 +35,15 @@ async function startServer() {
       const contentType = response.headers.get('content-type') || '';
       const text = await response.text();
 
+      // Log the proxy attempt to a debug file
+      try {
+        const fs = await import('fs');
+        const logMsg = `\n--- PROXY LOG START ---\nTimestamp: ${new Date().toISOString()}\nTarget: ${targetUrl}\nStatus: ${response.status}\nContent-Type: ${contentType}\nResponse Prefix (1000 chars):\n${text.substring(0, 1000)}\n--- PROXY LOG END ---\n`;
+        fs.appendFileSync('./src/proxy_debug.log', logMsg);
+      } catch (logErr) {
+        console.error("Failed to write to debug log:", logErr);
+      }
+
       if (!response.ok) {
         console.error(`[Proxy] Target API error: ${response.status}`, text.substring(0, 200));
         
@@ -46,25 +55,60 @@ async function startServer() {
         return res.status(response.status).json({ error: errorMessage, details: text.substring(0, 500) });
       }
 
+      // Robust cleaning and parsing function
+      const cleanAndParseJSON = (rawText: string): any => {
+        let cleaned = rawText.trim();
+        try {
+          return JSON.parse(cleaned);
+        } catch (initialErr) {
+          // Extract the first JSON object or array
+          const firstBrace = cleaned.indexOf('{');
+          const lastBrace = cleaned.lastIndexOf('}');
+          const firstBracket = cleaned.indexOf('[');
+          const lastBracket = cleaned.lastIndexOf(']');
+          
+          let startIdx = -1;
+          let endIdx = -1;
+          
+          if (firstBrace !== -1 && lastBrace !== -1) {
+            if (firstBracket !== -1 && firstBracket < firstBrace && lastBracket !== -1 && lastBracket > lastBrace) {
+              startIdx = firstBracket;
+              endIdx = lastBracket;
+            } else {
+              startIdx = firstBrace;
+              endIdx = lastBrace;
+            }
+          } else if (firstBracket !== -1 && lastBracket !== -1) {
+            startIdx = firstBracket;
+            endIdx = lastBracket;
+          }
+          
+          if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+            cleaned = cleaned.substring(startIdx, endIdx + 1);
+          }
+
+          try {
+            return JSON.parse(cleaned);
+          } catch (extractErr) {
+            // Strip single-line and multi-line comments
+            cleaned = cleaned.replace(/\/\/.*$/gm, '');
+            cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, '');
+            // Fix unquoted keys
+            cleaned = cleaned.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+            // Remove trailing commas before closing braces/brackets
+            cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+            
+            return JSON.parse(cleaned);
+          }
+        }
+      };
+
       // Check if it's actually JSON even if content-type says otherwise, or if content-type is missing
       try {
-        const json = JSON.parse(text);
+        const json = cleanAndParseJSON(text);
         return res.json(json);
-      } catch (e) {
-        // Try to extract gviz/tq JSON padding if it's wrapped
-        try {
-          const startIdx = text.indexOf('{');
-          const endIdx = text.lastIndexOf('}');
-          if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-            const cleanedText = text.substring(startIdx, endIdx + 1);
-            const json = JSON.parse(cleanedText);
-            return res.json(json);
-          }
-        } catch (innerErr) {
-          // Ignore and proceed to main error handling
-        }
-
-        console.error(`[Proxy] Failed to parse target response as JSON. Content-Type: ${contentType}`);
+      } catch (e: any) {
+        console.error(`[Proxy] Failed to parse target response as JSON. Content-Type: ${contentType}. Error: ${e.message}`);
         
         if (text.includes('<!DOCTYPE html>') || text.includes('<html')) {
           return res.status(422).json({ 
@@ -74,7 +118,7 @@ async function startServer() {
         }
         
         return res.status(422).json({ 
-          error: "ข้อมูลที่ได้รับจาก URL ไม่ใช่รูปแบบ JSON ที่ถูกต้อง",
+          error: `ข้อมูลที่ได้รับจาก URL ไม่ใช่รูปแบบ JSON ที่ถูกต้อง (${e.message})`,
           details: text.substring(0, 200)
         });
       }
