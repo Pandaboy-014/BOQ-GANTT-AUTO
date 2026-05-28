@@ -275,6 +275,10 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
   const [isMobile, setIsMobile] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
 
   useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as any });
+  }, []);
+
+  useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth < 768);
     };

@@ -31,6 +31,10 @@ export default function App() {
   const [selectedProvince, setSelectedProvince] = useState<string>('');
 
   useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as any });
+  }, [currentView, selectedProject]);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
