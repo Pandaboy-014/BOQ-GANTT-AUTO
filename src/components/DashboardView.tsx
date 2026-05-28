@@ -646,6 +646,22 @@ export default function DashboardView({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'projects' | 'calendar'>('projects');
+  const [isMobileScreen, setIsMobileScreen] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      setIsMobileScreen(window.innerWidth < 768);
+    };
+    if (typeof window !== 'undefined') {
+      setIsMobileScreen(window.innerWidth < 768);
+      window.addEventListener('resize', handleResize);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', handleResize);
+      }
+    };
+  }, []);
 
   const availableProvinces = React.useMemo(() => {
     const provinceSet = new Set<string>();
@@ -1030,88 +1046,149 @@ export default function DashboardView({
   
   return (
     <div className="flex min-h-screen bg-[#070b14] text-slate-100 font-sans relative overflow-x-hidden">
-      {/* Mobile Backdrop Overlay */}
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden transition-opacity duration-300"
-          onClick={() => setIsSidebarOpen(false)}
-        />
+      {/* Mobile Backdrop and Drawer under AnimatePresence */}
+      <AnimatePresence>
+        {isMobileScreen && isSidebarOpen && (
+          <>
+            {/* Mobile Backdrop Overlay */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+              onClick={() => setIsSidebarOpen(false)}
+            />
+
+            {/* Sliding Drawer for Mobile */}
+            <motion.aside 
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+              className="fixed inset-y-0 left-0 z-50 w-72 bg-[#0a0f1a] border-r border-white/5 flex flex-col p-6 space-y-10 shadow-[5px_0_30px_rgba(0,0,0,0.5)] md:hidden"
+            >
+              <div className="flex items-center justify-between px-2">
+                <Logo className="text-cyan-400 max-w-full h-[48px]" />
+                <button 
+                  onClick={() => setIsSidebarOpen(false)}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <nav className="flex-1 space-y-1">
+                <NavItem 
+                  icon={<LayoutDashboard className="w-5 h-5" />} 
+                  label="โครงการทั้งหมด" 
+                  active={activeTab === 'projects'} 
+                  onClick={() => {
+                    setActiveTab('projects');
+                    setIsSidebarOpen(false);
+                  }} 
+                />
+                <NavItem 
+                  icon={<Briefcase className="w-5 h-5" />} 
+                  label="ข้อมูลส่วนตัว" 
+                  onClick={() => {
+                    onNavigateProfile();
+                    setIsSidebarOpen(false);
+                  }}
+                />
+                <NavItem 
+                  icon={<Calendar className="w-5 h-5" />} 
+                  label="ปฏิทินงาน" 
+                  active={activeTab === 'calendar'} 
+                  onClick={() => {
+                    setActiveTab('calendar');
+                    setIsSidebarOpen(false);
+                  }} 
+                />
+              </nav>
+
+              <div className="pt-6 border-t border-white/5 space-y-4">
+                <button 
+                  onClick={() => {
+                    onNavigateProfile();
+                    setIsSidebarOpen(false);
+                  }}
+                  className="flex items-center gap-4 w-full p-3 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-all group"
+                >
+                  <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-light text-white shadow-xl overflow-hidden border border-white/10">
+                    {user?.photoURL ? <img src={user.photoURL} alt="" /> : user?.email?.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0 text-left">
+                    <p className="text-sm font-light truncate text-white uppercase tracking-tight">{user?.displayName || 'JAKKARIN ATAGUMMA'}</p>
+                    <p className="text-[9px] font-light text-brand-blue uppercase tracking-widest">ดูข้อมูลส่วนตัว</p>
+                  </div>
+                </button>
+                <button 
+                  onClick={() => {
+                    onLogout();
+                    setIsSidebarOpen(false);
+                  }}
+                  className="flex items-center gap-3 w-full p-3 hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 transition-all rounded-2xl group"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="text-xs font-light uppercase tracking-tight">ออกจากระบบ</span>
+                </button>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Desktop Persistent Sidebar */}
+      {!isMobileScreen && (
+        <aside className="hidden md:flex w-72 bg-[#0a0f1a] border-r border-white/5 flex-col p-6 space-y-10 min-h-screen shrink-0 sticky top-0">
+          <div className="flex items-center justify-between px-2">
+            <Logo className="text-cyan-400 max-w-full h-[65px]" />
+          </div>
+
+          <nav className="flex-1 space-y-1">
+            <NavItem 
+              icon={<LayoutDashboard className="w-5 h-5" />} 
+              label="โครงการทั้งหมด" 
+              active={activeTab === 'projects'} 
+              onClick={() => setActiveTab('projects')} 
+            />
+            <NavItem 
+              icon={<Briefcase className="w-5 h-5" />} 
+              label="ข้อมูลส่วนตัว" 
+              onClick={onNavigateProfile}
+            />
+            <NavItem 
+              icon={<Calendar className="w-5 h-5" />} 
+              label="ปฏิทินงาน" 
+              active={activeTab === 'calendar'} 
+              onClick={() => setActiveTab('calendar')} 
+            />
+          </nav>
+
+          <div className="pt-6 border-t border-white/5 space-y-4">
+            <button 
+              onClick={onNavigateProfile}
+              className="flex items-center gap-4 w-full p-3 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-all group"
+            >
+              <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-light text-white shadow-xl overflow-hidden border border-white/10">
+                {user?.photoURL ? <img src={user.photoURL} alt="" /> : user?.email?.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0 text-left">
+                <p className="text-sm font-light truncate text-white uppercase tracking-tight">{user?.displayName || 'JAKKARIN ATAGUMMA'}</p>
+                <p className="text-[9px] font-light text-brand-blue uppercase tracking-widest">ดูข้อมูลส่วนตัว</p>
+              </div>
+            </button>
+            <button 
+              onClick={onLogout}
+              className="flex items-center gap-3 w-full p-3 hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 transition-all rounded-2xl group"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-xs font-light uppercase tracking-tight">ออกจากระบบ</span>
+            </button>
+          </div>
+        </aside>
       )}
-
-      {/* Sidebar */}
-      <aside className={`
-        fixed inset-y-0 left-0 z-50 w-72 bg-[#0a0f1a] border-r border-white/5 flex flex-col p-6 space-y-10 transition-transform duration-300 transform
-        ${isSidebarOpen ? 'translate-x-0 shadow-[0_0_50px_rgba(0,0,0,0.8)]' : '-translate-x-full'}
-        md:translate-x-0 md:static md:flex md:z-20
-      `}>
-        <div className="flex items-center justify-between px-2">
-          {/* Logo takes 65px height on desktop, 48px height on mobile */}
-          <Logo className="text-cyan-400 max-w-full h-[48px] md:h-[65px]" />
-          <button 
-            onClick={() => setIsSidebarOpen(false)}
-            className="md:hidden p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <nav className="flex-1 space-y-1">
-          <NavItem 
-            icon={<LayoutDashboard className="w-5 h-5" />} 
-            label="โครงการทั้งหมด" 
-            active={activeTab === 'projects'} 
-            onClick={() => {
-              setActiveTab('projects');
-              setIsSidebarOpen(false);
-            }} 
-          />
-          <NavItem 
-            icon={<Briefcase className="w-5 h-5" />} 
-            label="ข้อมูลส่วนตัว" 
-            onClick={() => {
-              onNavigateProfile();
-              setIsSidebarOpen(false);
-            }}
-          />
-          <NavItem 
-            icon={<Calendar className="w-5 h-5" />} 
-            label="ปฏิทินงาน" 
-            active={activeTab === 'calendar'} 
-            onClick={() => {
-              setActiveTab('calendar');
-              setIsSidebarOpen(false);
-            }} 
-          />
-        </nav>
-
-        <div className="pt-6 border-t border-white/5 space-y-4">
-          <button 
-            onClick={() => {
-              onNavigateProfile();
-              setIsSidebarOpen(false);
-            }}
-            className="flex items-center gap-4 w-full p-3 bg-white/5 rounded-2xl border border-white/5 hover:bg-white/10 transition-all group"
-          >
-            <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-light text-white shadow-xl overflow-hidden border border-white/10">
-              {user?.photoURL ? <img src={user.photoURL} alt="" /> : user?.email?.charAt(0).toUpperCase()}
-            </div>
-            <div className="flex-1 min-w-0 text-left">
-              <p className="text-sm font-light truncate text-white uppercase tracking-tight">{user?.displayName || 'JAKKARIN ATAGUMMA'}</p>
-              <p className="text-[9px] font-light text-brand-blue uppercase tracking-widest">ดูข้อมูลส่วนตัว</p>
-            </div>
-          </button>
-          <button 
-            onClick={() => {
-              onLogout();
-              setIsSidebarOpen(false);
-            }}
-            className="flex items-center gap-3 w-full p-3 hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 transition-all rounded-2xl group"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="text-xs font-light uppercase tracking-tight">ออกจากระบบ</span>
-          </button>
-        </div>
-      </aside>
 
       {/* Main Content */}
       <main className="flex-1 p-4 sm:p-6 lg:p-10 xl:p-12 overflow-y-auto w-full">
