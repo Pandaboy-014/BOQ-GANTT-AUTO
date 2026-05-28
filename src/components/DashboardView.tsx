@@ -511,6 +511,11 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
 
   const cleanAndParseJSON = (rawText: string): any => {
     let cleaned = rawText.trim();
+    const lower = cleaned.toLowerCase();
+    if (lower.startsWith('<!doctype') || lower.startsWith('<html') || lower.includes('<head>') || lower.includes('<body>') || lower.includes('goog-login-button') || (lower.startsWith('<') && lower.includes('>'))) {
+      throw new Error("ลิงก์ Google Apps Script ส่งข้อมูลกลับเป็นหน้าเว็บ HTML (แนะนำให้ตั้งสิทธิ์ความปลอดภัยใน Google Apps Script ให้เป็น 'Anyone' หรือ 'ทุกคน')");
+    }
+    
     try {
       return JSON.parse(cleaned);
     } catch (initialErr) {
@@ -540,6 +545,12 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
         cleaned = cleaned.substring(startIdx, endIdx + 1);
       }
 
+      // Check newly extracted string for html
+      const slicedLower = cleaned.toLowerCase();
+      if (slicedLower.includes('<html') || slicedLower.includes('<body>') || (slicedLower.startsWith('<') && slicedLower.includes('>'))) {
+        throw new Error("และพบหน้าเชื่อมต่อของ Google หน้าเว็บนี้ไม่สามารถแสดงได้เนื่องจากสคริปต์ความปลอดภัย (โปรดแชร์เป็นสำหรับ Everyone)");
+      }
+
       try {
         return JSON.parse(cleaned);
       } catch (extractErr) {
@@ -562,8 +573,12 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
     throw new Error(`Invalid structure (${e.message})`);
   }
 
+  if (json.error) {
+    throw new Error(json.error);
+  }
+
   if (json.status !== "success" || !json.data?.summary) {
-    throw new Error("API response error");
+    throw new Error(json.message || "API response error: Google Sheets runtime failed or layout incomplete");
   }
 
   const s = json.data.summary;
@@ -1143,22 +1158,33 @@ export default function DashboardView({
                     <p className="text-[10px] text-slate-400 font-light mt-0.5 uppercase tracking-wide">Filter Projects by Province</p>
                   </div>
                 </div>
-                <div className="relative w-full sm:w-[280px]">
-                  <select
-                    value={selectedProvince}
-                    onChange={(e) => onSelectProvince(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 hover:border-white/20 rounded-2xl p-4 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all font-sans text-sm tracking-tight appearance-none cursor-pointer pr-10"
-                  >
-                    <option value="" className="bg-[#0f1420] text-slate-400">-- เลือกจังหวัด --</option>
-                    {availableProvinces.map(p => (
-                      <option key={p} value={p} className="bg-[#0f1420] text-white">
-                        {p}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
-                    <ChevronDown className="h-4 w-4" />
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+                  <div className="relative w-full sm:w-[280px]">
+                    <select
+                      value={selectedProvince}
+                      onChange={(e) => onSelectProvince(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 hover:border-white/20 rounded-2xl p-4 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500/30 transition-all font-sans text-sm tracking-tight appearance-none cursor-pointer pr-10"
+                    >
+                      <option value="" className="bg-[#0f1420] text-slate-400">-- เลือกจังหวัด --</option>
+                      {availableProvinces.map(p => (
+                        <option key={p} value={p} className="bg-[#0f1420] text-white">
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-slate-400">
+                      <ChevronDown className="h-4 w-4" />
+                    </div>
                   </div>
+                  {userRole !== 'manager' && (
+                    <button
+                      onClick={onAddProject}
+                      className="flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-5 py-4 text-sm font-light transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap active:scale-95"
+                    >
+                      <Plus className="w-4 h-4" />
+                      เพิ่มโครงการ
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1176,7 +1202,7 @@ export default function DashboardView({
                       {selectedProvince ? selectedProvinceProjects.length : projects.length}
                     </span>
                     <div className="flex flex-col text-left">
-                      <span className="text-[10px] sm:text-[11px] font-normal text-blue-200 uppercase tracking-tight opacity-85 leading-tight">
+                       <span className="text-[10px] sm:text-[11px] font-normal text-blue-200 uppercase tracking-tight opacity-85 leading-tight">
                         {selectedProvince ? `โครงการใน${selectedProvince}` : "โครงการที่กำลังดำเนินการ"}
                       </span>
                     </div>
@@ -1189,11 +1215,24 @@ export default function DashboardView({
                   <div className="w-24 h-24 bg-[#6366f1]/10 rounded-[40px] flex items-center justify-center border border-[#6366f1]/20 text-[#6366f1]">
                     <MapPin className="w-10 h-10 animate-pulse" />
                   </div>
-                  <div className="space-y-2">
-                    <h3 className="text-2xl font-light text-white tracking-tight">กรุณาเลือกจังหวัด</h3>
-                    <p className="text-xs sm:text-sm text-slate-400 font-light max-w-sm tracking-wide leading-relaxed">
-                      โปรดเลือกจังหวัดจากแถบตัวกรองด้านบนเพื่อวิเคราะห์งบประมาณและตรวจสอบรายชื่อโครงการที่อยู่ภายใต้จังหวัดนั้นๆ
-                    </p>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <h3 className="text-2xl font-light text-white tracking-tight">กรุณาเลือกจังหวัด</h3>
+                      <p className="text-xs sm:text-sm text-slate-400 font-light max-w-sm tracking-wide leading-relaxed mx-auto">
+                        โปรดเลือกจังหวัดจากแถบตัวกรองด้านบนเพื่อวิเคราะห์งบประมาณและตรวจสอบรายชื่อโครงการที่อยู่ภายใต้จังหวัดนั้นๆ
+                      </p>
+                    </div>
+                    {userRole !== 'manager' && (
+                      <div className="pt-2">
+                        <button
+                          onClick={onAddProject}
+                          className="mx-auto flex transition-all duration-300 hover:scale-[1.03] active:scale-97 items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-6 py-3.5 text-sm font-light shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap"
+                        >
+                          <Plus className="w-4 h-4" />
+                          เพิ่มโครงการใหม่
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (

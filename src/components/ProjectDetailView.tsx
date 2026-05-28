@@ -560,6 +560,11 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       
       const cleanAndParseJSON = (rawText: string): any => {
         let cleaned = rawText.trim();
+        const lower = cleaned.toLowerCase();
+        if (lower.startsWith('<!doctype') || lower.startsWith('<html') || lower.includes('<head>') || lower.includes('<body>') || lower.includes('goog-login-button') || (lower.startsWith('<') && lower.includes('>'))) {
+          throw new Error("ลิงก์ Google Apps Script ส่งข้อมูลกลับเป็นหน้าเว็บ HTML (แนะนำให้ตั้งสิทธิ์ความปลอดภัยใน Google Apps Script ให้เป็น 'Anyone' หรือ 'ทุกคน')");
+        }
+
         try {
           return JSON.parse(cleaned);
         } catch (initialErr) {
@@ -589,6 +594,12 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
             cleaned = cleaned.substring(startIdx, endIdx + 1);
           }
 
+          // Check newly extracted string for html
+          const slicedLower = cleaned.toLowerCase();
+          if (slicedLower.includes('<html') || slicedLower.includes('<body>') || (slicedLower.startsWith('<') && slicedLower.includes('>'))) {
+            throw new Error("และพบหน้าเชื่อมต่อของ Google หน้าเว็บนี้ไม่สามารถแสดงได้เนื่องจากสคริปต์ความปลอดภัย (โปรดแชร์เป็นสำหรับ Everyone)");
+          }
+
           try {
             return JSON.parse(cleaned);
           } catch (extractErr) {
@@ -609,6 +620,10 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
         parsedJson = cleanAndParseJSON(text);
       } catch (e: any) {
         throw new Error(`โครงสร้างข้อมูล JSON ไม่ถูกต้อง (${e.message})`);
+      }
+
+      if (parsedJson.error) {
+        throw new Error(parsedJson.error);
       }
 
       if (parsedJson.status !== "success" || !parsedJson.data) {

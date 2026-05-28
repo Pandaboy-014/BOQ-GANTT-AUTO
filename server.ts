@@ -21,14 +21,23 @@ async function startServer() {
     try {
       console.log(`[Proxy] Requesting: ${targetUrl}`);
       
-      const response = await fetch(targetUrl, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        },
-        redirect: 'follow'
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds timeout
+      
+      let response: Response;
+      try {
+        response = await fetch(targetUrl, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          },
+          redirect: 'follow',
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       console.log(`[Proxy] Target responded with status: ${response.status}`);
       
@@ -124,7 +133,11 @@ async function startServer() {
       }
     } catch (error: any) {
       console.error('[Proxy] Failure:', error);
-      res.status(500).json({ error: `Proxy failure: ${error.message}` });
+      let errMsg = `Proxy failure: ${error.message}`;
+      if (error.name === 'AbortError' || error.message?.includes('aborted') || error.message?.includes('Timeout')) {
+        errMsg = "การเชื่อมต่อไปยัง Google Apps Script หมดเวลา (60 วินาที) โปรดตรวจสอบความเร็วเซิร์ฟเวอร์หรือลองอีกครั้ง";
+      }
+      res.status(500).json({ error: errMsg });
     }
   });
 
