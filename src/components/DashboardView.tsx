@@ -1114,7 +1114,7 @@ export default function DashboardView({
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 sm:p-8 lg:p-12 overflow-y-auto w-full">
+      <main className="flex-1 p-4 sm:p-6 lg:p-10 xl:p-12 overflow-y-auto w-full">
         <div className="max-w-full w-full mx-auto space-y-8 md:space-y-14 px-1 sm:px-4">
           
           {/* Mobile top navigation containing hamburger button and brand logo */}
@@ -1215,7 +1215,7 @@ export default function DashboardView({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
                       {/* Card 1: Total Budget Summary */}
                       <div className="bg-[#0f1420]/70 backdrop-blur-md rounded-[24px] sm:rounded-[32px] border border-white/10 p-5 sm:p-6 shadow-2xl flex flex-col justify-between hover:border-cyan-500/30 hover:shadow-cyan-500/5 transition-all duration-300 space-y-3">
                         <div className="flex justify-between items-start gap-2">
@@ -1321,8 +1321,8 @@ export default function DashboardView({
                   </section>
 
                   <section className="space-y-10 mt-14">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-white/5 pb-8 gap-4">
-                      <div className="flex justify-between items-center w-full md:w-auto">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-white/5 pb-8 gap-4">
+                      <div className="flex justify-between items-center w-full lg:w-auto">
                         <div className="space-y-2">
                           <h3 className="text-2xl sm:text-3xl font-light text-white uppercase tracking-tight">
                             {selectedProvince === 'ไม่ระบุจังหวัด'
@@ -1334,27 +1334,27 @@ export default function DashboardView({
                         {userRole !== 'manager' && (
                           <button
                             onClick={onAddProject}
-                            className="md:hidden flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3.5 py-2.5 text-xs font-light transition-all shadow-lg shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
+                            className="lg:hidden flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3.5 py-2.5 text-xs font-light transition-all shadow-lg shadow-indigo-600/20 active:scale-95 whitespace-nowrap"
                           >
                             <Plus className="w-4 h-4" />
                             เพิ่มโครงการ
                           </button>
                         )}
                       </div>
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full lg:w-auto">
                         <div className="relative flex-1 sm:flex-initial">
                           <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                           <input 
                             placeholder="ค้นหาโครงการ..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="bg-slate-900/50 border border-white/10 rounded-2xl py-3.5 pl-14 pr-8 text-white focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue/40 transition-all w-full md:min-w-[320px] shadow-inner font-light text-sm tracking-tight"
+                            className="bg-slate-900/50 border border-white/10 rounded-2xl py-3.5 pl-14 pr-8 text-white focus:outline-none focus:ring-1 focus:ring-brand-blue/30 focus:border-brand-blue/40 transition-all w-full lg:min-w-[320px] shadow-inner font-light text-sm tracking-tight"
                           />
                         </div>
                         {userRole !== 'manager' && (
                           <button
                             onClick={onAddProject}
-                            className="hidden md:flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-5 py-3.5 text-sm font-light transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap hover:scale-[1.02] active:scale-98"
+                            className="hidden lg:flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl px-5 py-3.5 text-sm font-light transition-all shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/30 whitespace-nowrap hover:scale-[1.02] active:scale-98"
                           >
                             <Plus className="w-4 h-4" />
                             เพิ่มโครงการ
