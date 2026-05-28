@@ -1030,9 +1030,9 @@ export default function DashboardView({
   
   return (
     <div className="flex min-h-screen bg-[#070b14] text-slate-100 font-sans relative overflow-x-hidden">
-      {/* Mobile Backdrop Overlay (only displayed under md:hidden breakpoint) */}
+      {/* Mobile Backdrop Overlay (only displayed under lg:hidden breakpoint) */}
       <div 
-        className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden transition-all duration-300 ${
+        className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden transition-all duration-300 ${
           isSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
         }`}
         onClick={() => setIsSidebarOpen(false)}
@@ -1042,14 +1042,14 @@ export default function DashboardView({
       <aside className={`
         fixed inset-y-0 left-0 z-50 w-72 bg-[#0a0f1a] border-r border-white/5 flex flex-col p-6 space-y-10 transition-transform duration-300 ease-in-out
         ${isSidebarOpen ? 'translate-x-0 shadow-[5px_0_30px_rgba(0,0,0,0.5)]' : '-translate-x-full'}
-        md:translate-x-0 md:static md:flex md:w-72 md:shrink-0 md:sticky md:top-0 md:shadow-none min-h-screen
+        lg:translate-x-0 lg:static lg:flex lg:w-72 lg:shrink-0 lg:sticky lg:top-0 lg:shadow-none min-h-screen
       `}>
         <div className="flex items-center justify-between px-2">
           {/* Logo takes 65px height on desktop, 48px height on mobile */}
-          <Logo className="text-cyan-400 max-w-full h-[48px] md:h-[65px]" />
+          <Logo className="text-cyan-400 max-w-full h-[48px] lg:h-[65px]" />
           <button 
             onClick={() => setIsSidebarOpen(false)}
-            className="md:hidden p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all"
+            className="lg:hidden p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl transition-all"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1118,7 +1118,7 @@ export default function DashboardView({
         <div className="max-w-full w-full mx-auto space-y-8 md:space-y-14 px-1 sm:px-4">
           
           {/* Mobile top navigation containing hamburger button and brand logo */}
-          <div className="flex md:hidden items-center justify-between mb-4 bg-[#0a0f1a] p-4 rounded-3xl border border-white/5 shadow-xl">
+          <div className="flex lg:hidden items-center justify-between mb-4 bg-[#0a0f1a] p-4 rounded-3xl border border-white/5 shadow-xl">
             <button 
               onClick={() => setIsSidebarOpen(true)}
               className="p-3 bg-white/5 border border-white/10 rounded-2xl text-slate-300 hover:text-white transition-all shadow-md focus:outline-none"
