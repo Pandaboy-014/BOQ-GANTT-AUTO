@@ -794,6 +794,12 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
     const tasksQuery = query(collection(db, 'projects', project.id, 'tasks'));
     const catsQuery = query(collection(db, 'projects', project.id, 'categories'));
 
+    // Safety watchdog to prevent infinite loading screen in case of Firestore failure/network loop
+    const safetyTimer = setTimeout(() => {
+      console.warn("GanttView loaded with safety timeout.");
+      setLoading(false);
+    }, 4000);
+
     const unsubscribeTasks = onSnapshot(tasksQuery, (snapshot) => {
       let taskData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BOQItem));
       taskData.sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -803,6 +809,10 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
         const newUnits = Array.from(new Set([...prev, ...taskData.map(t => t.unit).filter(Boolean)]));
         return newUnits;
       });
+    }, (error) => {
+      console.error("GanttView Tasks fetch error:", error);
+      clearTimeout(safetyTimer);
+      setLoading(false);
     });
 
     const unsubscribeCats = onSnapshot(catsQuery, (snapshot) => {
@@ -837,11 +847,17 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       });
 
       setLoading(false);
+      clearTimeout(safetyTimer);
+    }, (error) => {
+      console.error("GanttView Categories fetch error:", error);
+      clearTimeout(safetyTimer);
+      setLoading(false);
     });
 
     return () => {
       unsubscribeTasks();
       unsubscribeCats();
+      clearTimeout(safetyTimer);
     };
   }, [project.id]);
 

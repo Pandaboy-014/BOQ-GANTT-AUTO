@@ -80,20 +80,36 @@ export default function SCurveView({ project: propProject, onBack }: SCurveViewP
     const tasksQuery = query(collection(db, 'projects', project.id, 'tasks'));
     const catsQuery = query(collection(db, 'projects', project.id, 'categories'));
 
+    // Safety timeout to ensure S-Curve view doesn't block forever
+    const safetyTimer = setTimeout(() => {
+      console.warn("SCurveView loaded with timeout fallback.");
+      setLoading(false);
+    }, 4000);
+
     const unsubscribeTasks = onSnapshot(tasksQuery, (snapshot) => {
       const taskData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BOQItem));
       setTasks(taskData);
+    }, (error) => {
+      console.error("SCurveView Tasks fetch error:", error);
+      clearTimeout(safetyTimer);
+      setLoading(false);
     });
 
     const unsubscribeCats = onSnapshot(catsQuery, (snapshot) => {
       const catData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CategoryInfo));
       setCategoriesData(catData);
       setLoading(false);
+      clearTimeout(safetyTimer);
+    }, (error) => {
+      console.error("SCurveView Categories fetch error:", error);
+      clearTimeout(safetyTimer);
+      setLoading(false);
     });
 
     return () => {
       unsubscribeTasks();
       unsubscribeCats();
+      clearTimeout(safetyTimer);
     };
   }, [project.id]);
 

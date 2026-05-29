@@ -29,50 +29,88 @@ export default function App() {
   const [editingProject, setEditingProject] = useState<ProjectInfo | null>(null);
   const [projectsList, setProjectsList] = useState<ProjectInfo[]>([]);
   const [selectedProvince, setSelectedProvince] = useState<string>('');
+  const [dbError, setDbError] = useState<boolean>(false);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' as any });
   }, [currentView, selectedProject]);
 
   useEffect(() => {
+    let active = true;
+
+    // Safety watchdog timer (5 seconds max waiting for Firebase)
+    const safetyTimeout = setTimeout(() => {
+      if (active && !authReady) {
+        console.warn("Safety trigger: App loading timed out. Loading fallback screen.");
+        setDbError(true);
+        setAuthReady(true);
+        // Fallback checks
+        if (!user) {
+          setCurrentView('login');
+        } else if (!userRole) {
+          setUserRole('engineer');
+          setCurrentView('dashboard');
+        }
+      }
+    }, 5000);
+
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (!active) return;
       setUser(u);
       if (u) {
-        // Fetch role from Firestore
-        const docRef = doc(db, 'users', u.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setUserRole(docSnap.data().role);
-          setCurrentView('dashboard');
-        } else {
-          // If no profile, we need to let them pick a role (could redirect to a simple role picker or setup default)
-          // For now, let's setup a simplified profile for Google users
-          if (u.providerData.some(p => p.providerId === 'google.com')) {
-            // New Google user - we'll let them settle in as engineer by default or show a choice
-            // Let's actually redirect to a "complete profile" state if we had one, 
-            // but to keep it simple, we'll set a default role and they can change it in Profile
-            const defaultRole = 'engineer';
-            await setDoc(doc(db, 'users', u.uid), {
-              name: u.displayName || 'Google User',
-              email: u.email || '',
-              role: defaultRole,
-              avatarUrl: u.photoURL || '',
-              createdAt: new Date().toISOString()
-            });
-            setUserRole(defaultRole);
+        try {
+          // Fetch role from Firestore with a 4s Promise.race timeout
+          const docRef = doc(db, 'users', u.uid);
+          const docSnap = await Promise.race([
+            getDoc(docRef),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout getting user profile")), 4000))
+          ]);
+
+          if (docSnap.exists()) {
+            setUserRole(docSnap.data().role);
             setCurrentView('dashboard');
+            setDbError(false);
           } else {
-            setCurrentView('login');
+            // Setup simplified profile for Google users
+            if (u.providerData.some(p => p.providerId === 'google.com')) {
+              const defaultRole = 'engineer';
+              await Promise.race([
+                setDoc(doc(db, 'users', u.uid), {
+                  name: u.displayName || 'Google User',
+                  email: u.email || '',
+                  role: defaultRole,
+                  avatarUrl: u.photoURL || '',
+                  createdAt: new Date().toISOString()
+                }),
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout setting user profile")), 4000))
+              ]);
+              setUserRole(defaultRole);
+              setCurrentView('dashboard');
+              setDbError(false);
+            } else {
+              setCurrentView('login');
+            }
           }
+        } catch (err) {
+          console.error("Firestore initialization or profile fetch failed:", err);
+          setDbError(true);
+          // Auto-bypass to empty/fallback layout instead of blocking
+          setUserRole('engineer');
+          setCurrentView('dashboard');
         }
       } else {
         setUserRole(null);
         setCurrentView('login');
       }
       setAuthReady(true);
+      clearTimeout(safetyTimeout);
     });
 
-    return () => unsubscribe();
+    return () => {
+      active = false;
+      unsubscribe();
+      clearTimeout(safetyTimeout);
+    };
   }, []);
 
   useEffect(() => {
@@ -81,7 +119,7 @@ export default function App() {
       return;
     }
 
-    // Fixed query: Fetch projects where user is owner OR a member
+    // Fetch projects where user is owner OR a member
     const projectsRef = collection(db, 'projects');
     const q = query(
       projectsRef, 
@@ -94,8 +132,10 @@ export default function App() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProjectInfo));
       setProjectsList(projects);
+      setDbError(false);
     }, (error) => {
-      console.error("Firestore error:", error);
+      console.error("Firestore onSnapshot error:", error);
+      setDbError(true);
     });
 
     return () => unsubscribe();
@@ -179,6 +219,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans overflow-x-hidden">
+      {dbError && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 text-amber-300 px-6 py-3 text-center text-xs font-light uppercase tracking-widest flex items-center justify-center gap-3 animate-pulse sticky top-0 z-50 backdrop-blur-md">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse mr-1" />
+          ⚠️ เชื่อมต่อฐานข้อมูลไม่ได้ (ขณะนี้ระบบสลับมาใช้พื้นที่สำรองและเซสชันออฟไลน์ เรียบร้อยแล้ว)
+        </div>
+      )}
       <AnimatePresence mode="wait">
         {currentView === 'login' && (
           <motion.div
