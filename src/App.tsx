@@ -171,32 +171,57 @@ export default function App() {
     if (!user) return;
 
     try {
-      if (editingProject) {
-        await setDoc(doc(db, 'projects', project.id), {
+      const isEdit = !!editingProject;
+      let finalProject: ProjectInfo;
+      
+      if (isEdit) {
+        finalProject = {
           ...project,
-          ownerId: project.ownerId || editingProject.ownerId || user.uid,
+          ownerId: project.ownerId || editingProject!.ownerId || user.uid,
           memberIds: project.memberIds || []
-        }, { merge: true });
+        };
+        
+        // Optimistically update project in state instantly
+        setProjectsList(prev => prev.map(p => p.id === finalProject.id ? finalProject : p));
+      } else {
+        const newId = project.id || Math.random().toString(36).substr(2, 9);
+        finalProject = {
+          ...project,
+          id: newId,
+          ownerId: user.uid,
+          memberIds: []
+        };
+        
+        // Optimistically append new project to state instantly
+        setProjectsList(prev => {
+          if (prev.some(p => p.id === finalProject.id)) return prev;
+          return [...prev, finalProject];
+        });
+      }
+
+      if (isEdit) {
+        await setDoc(doc(db, 'projects', project.id), finalProject, { merge: true });
         setEditingProject(null);
         showToast("แก้ไขโครงการสำเร็จ", "success");
       } else {
-        const newProjectRef = doc(collection(db, 'projects'));
-        await setDoc(newProjectRef, {
-          ...project,
-          id: newProjectRef.id,
-          ownerId: user.uid,
-          memberIds: []
-        });
+        const newProjectRef = doc(db, 'projects', finalProject.id);
+        await setDoc(newProjectRef, finalProject);
         showToast("เพิ่มโครงการสำเร็จ", "success");
       }
       setCurrentView('dashboard');
     } catch (error) {
       showErrorToast(error, "บันทึกโครงการไม่สำเร็จ");
+      throw error;
     }
   };
 
   const handleDeleteProject = async (project: ProjectInfo) => {
     try {
+      // Optimistically remove project from state instantly
+      setProjectsList(prev => prev.filter(p => p.id !== project.id));
+      setEditingProject(null);
+      setCurrentView('dashboard');
+
       const { writeBatch, collection, getDocs } = await import('firebase/firestore');
       const batch = writeBatch(db);
       
@@ -209,11 +234,10 @@ export default function App() {
       
       await batch.commit();
       showToast("ลบโครงการเรียบร้อยแล้ว", "success");
-      setEditingProject(null);
-      setCurrentView('dashboard');
     } catch (err: any) {
       console.error("Error deleting project:", err);
       showErrorToast(err, "ไม่สามารถลบโครงการได้");
+      throw err;
     }
   };
 

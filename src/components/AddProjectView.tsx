@@ -23,14 +23,16 @@ import { differenceInDays, format, parseISO } from 'date-fns';
 import { th } from 'date-fns/locale';
 
 interface AddProjectViewProps {
-  onSave: (project: ProjectInfo) => void;
+  onSave: (project: ProjectInfo) => any;
   onCancel: () => void;
-  onDelete?: (project: ProjectInfo) => void;
+  onDelete?: (project: ProjectInfo) => any;
   projectToEdit?: ProjectInfo | null;
 }
 
 export default function AddProjectView({ onSave, onCancel, onDelete, projectToEdit }: AddProjectViewProps) {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const defaultData = {
     name: '',
     contractor: '',
@@ -67,8 +69,11 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
     }
   }, [projectToEdit]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving || isDeleting) return;
+    
+    setIsSaving(true);
     const project: ProjectInfo = {
       id: projectToEdit?.id || Math.random().toString(36).substr(2, 9),
       name: formData.name || '',
@@ -82,7 +87,14 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
       ownerId: formData.ownerId || '',
       memberIds: formData.memberIds || []
     } as ProjectInfo;
-    onSave(project);
+    
+    try {
+      await onSave(project);
+    } catch (err) {
+      console.error("Save failed:", err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -108,8 +120,9 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
           {projectToEdit && onDelete && (
             <button 
               type="button"
+              disabled={isSaving || isDeleting}
               onClick={() => setShowConfirmDelete(true)}
-              className="flex items-center gap-3 px-6 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-500 border border-rose-500/20 transition-all shadow-lg"
+              className="flex items-center gap-3 px-6 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-500 border border-rose-500/20 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Trash2 className="w-4 h-4" />
               ลบโครงการ
@@ -117,18 +130,29 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
           )}
           <button 
             type="button"
+            disabled={isSaving || isDeleting}
             onClick={onCancel}
-            className="flex items-center gap-3 px-6 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-white transition-all"
+            className="flex items-center gap-3 px-6 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="w-4 h-4 opacity-70" />
             ยกเลิก
           </button>
           <button 
+            disabled={isSaving || isDeleting}
             onClick={handleSubmit}
-            className="flex items-center gap-3 px-10 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-indigo-600 text-white shadow-2xl shadow-indigo-600/30 hover:bg-indigo-500 transition-all"
+            className="flex items-center gap-3 px-10 py-4 rounded-2xl font-light text-xs uppercase tracking-tight bg-indigo-600 text-white shadow-2xl shadow-indigo-600/30 hover:bg-indigo-500 transition-all disabled:bg-indigo-600/50 disabled:cursor-not-allowed"
           >
-            <Save className="w-4 h-4" />
-            บันทึกโครงการ
+            {isSaving ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                กำลังทำงาน...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                บันทึกโครงการ
+              </>
+            )}
           </button>
         </div>
       </header>
@@ -326,10 +350,18 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
             </div>
 
             <button 
+              disabled={isSaving || isDeleting}
               onClick={handleSubmit}
-              className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-light uppercase tracking-[0.2em] transition-all shadow-2xl shadow-indigo-600/30 active:scale-[0.98] mt-6 text-xs"
+              className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-light uppercase tracking-[0.2em] transition-all shadow-2xl shadow-indigo-600/30 active:scale-[0.98] mt-6 text-xs flex items-center justify-center gap-2 disabled:bg-indigo-600/50 disabled:cursor-not-allowed"
             >
-              Confirm Integrity
+              {isSaving ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Confirm Integrity"
+              )}
             </button>
           </section>
         </div>
@@ -361,19 +393,35 @@ export default function AddProjectView({ onSave, onCancel, onDelete, projectToEd
                 </div>
                 <div className="flex flex-col gap-3 pt-4 font-sans">
                   <button 
-                    onClick={() => {
+                    disabled={isSaving || isDeleting}
+                    onClick={async () => {
                       if (onDelete && projectToEdit) {
-                        onDelete(projectToEdit);
+                        setIsDeleting(true);
+                        try {
+                          await onDelete(projectToEdit);
+                        } catch (err) {
+                          console.error("Delete failed:", err);
+                        } finally {
+                          setIsDeleting(false);
+                          setShowConfirmDelete(false);
+                        }
                       }
-                      setShowConfirmDelete(false);
                     }}
-                    className="w-full py-4 bg-rose-500 hover:bg-rose-600 font-bold rounded-2xl transition-all shadow-xl shadow-rose-500/20 text-sm text-white"
+                    className="w-full py-4 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 font-bold rounded-2xl transition-all shadow-xl shadow-rose-500/20 text-sm text-white flex items-center justify-center gap-2"
                   >
-                    ยืนยัน ลบโครงการถาวร
+                    {isDeleting ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        กำลังลบโครงการ...
+                      </>
+                    ) : (
+                      "ยืนยัน ลบโครงการถาวร"
+                    )}
                   </button>
                   <button 
+                    disabled={isSaving || isDeleting}
                     onClick={() => setShowConfirmDelete(false)}
-                    className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-2xl transition-all text-sm"
+                    className="w-full py-4 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 font-bold rounded-2xl transition-all text-sm"
                   >
                     ยกเลิก
                   </button>
