@@ -61,46 +61,68 @@ export default function App() {
         try {
           // Fetch role from Firestore with a 4s Promise.race timeout
           const docRef = doc(db, 'users', u.uid);
-          const docSnap = await Promise.race([
-            getDoc(docRef),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout getting user profile")), 4000))
-          ]);
+          let docSnap;
+          try {
+            docSnap = await Promise.race([
+              getDoc(docRef),
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout getting user profile")), 4000))
+            ]);
+            // If we successfully fetched docSnap (regardless of if it exists or not), 
+            // Firestore connection is healthy and functional.
+            setDbError(false);
+          } catch (fetchErr: any) {
+            console.error("Real connection error or timeout fetching profile:", fetchErr);
+            setDbError(true);
+            // Fallback for visual access while database issue is unresolved
+            setUserRole('engineer');
+            setCurrentView('dashboard');
+            setAuthReady(true);
+            clearTimeout(safetyTimeout);
+            return;
+          }
 
-          if (docSnap.exists()) {
-            setUserRole(docSnap.data().role);
+          if (docSnap && docSnap.exists()) {
+            setUserRole(docSnap.data().role || 'engineer');
             setCurrentView('dashboard');
             setDbError(false);
           } else {
-            // Setup simplified profile for Google users
-            if (u.providerData.some(p => p.providerId === 'google.com')) {
-              const defaultRole = 'engineer';
+            // Document doesn't exist yet - which is normal for a brand new user.
+            // Setup default profile for ANY authenticated user to integrate them instantly.
+            const defaultRole = 'engineer';
+            const newUserProfile = {
+              name: u.displayName || u.email?.split('@')[0] || 'User',
+              email: u.email || '',
+              role: defaultRole,
+              avatarUrl: u.photoURL || '',
+              createdAt: new Date().toISOString()
+            };
+
+            try {
               await Promise.race([
-                setDoc(doc(db, 'users', u.uid), {
-                  name: u.displayName || 'Google User',
-                  email: u.email || '',
-                  role: defaultRole,
-                  avatarUrl: u.photoURL || '',
-                  createdAt: new Date().toISOString()
-                }),
+                setDoc(doc(db, 'users', u.uid), newUserProfile),
                 new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout setting user profile")), 4000))
               ]);
               setUserRole(defaultRole);
               setCurrentView('dashboard');
               setDbError(false);
-            } else {
-              setCurrentView('login');
+            } catch (createErr: any) {
+              console.error("Real connection error or timeout creating profile:", createErr);
+              setDbError(true);
+              // Fallback for visual access
+              setUserRole(defaultRole);
+              setCurrentView('dashboard');
             }
           }
         } catch (err) {
-          console.error("Firestore initialization or profile fetch failed:", err);
+          console.error("Unexpected error in profile setup process:", err);
           setDbError(true);
-          // Auto-bypass to empty/fallback layout instead of blocking
           setUserRole('engineer');
           setCurrentView('dashboard');
         }
       } else {
         setUserRole(null);
         setCurrentView('login');
+        setDbError(false);
       }
       setAuthReady(true);
       clearTimeout(safetyTimeout);
