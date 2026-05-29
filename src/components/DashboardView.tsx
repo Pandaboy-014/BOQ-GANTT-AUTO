@@ -1566,6 +1566,101 @@ export default function DashboardView({
   );
 }
 
+const getProjectMonths = (realtimeData: RealtimeProjectData | null, project: ProjectInfo): Array<{ monthIdx: number; thaiYear: number; label: string }> => {
+  const THAI_MONTHS_LOCAL = [
+    "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+    "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+  ];
+  
+  const monthMap = new Map<string, { monthIdx: number; thaiYear: number }>();
+  
+  // 1. Check from daily list
+  if (realtimeData && realtimeData.daily && realtimeData.daily.length > 0) {
+    realtimeData.daily.forEach((item) => {
+      if (!item || !item.date) return;
+      const parts = String(item.date).trim().split("/");
+      if (parts.length >= 3) {
+        const m = parseInt(parts[1], 10);
+        let y = parseInt(parts[2], 10);
+        if (y < 2400) y += 543; // convert to Buddhist Era if Gregorian
+        if (m >= 1 && m <= 12 && y > 2400) {
+          const label = `${THAI_MONTHS_LOCAL[m - 1]} ${y}`;
+          monthMap.set(label, { monthIdx: m, thaiYear: y });
+        }
+      }
+    });
+  }
+  
+  // 2. Check from monthlyDeductions
+  if (realtimeData && realtimeData.monthlyDeductions && realtimeData.monthlyDeductions.length > 0) {
+    realtimeData.monthlyDeductions.forEach((item) => {
+      if (!item || !item.month) return;
+      const norm = normalizeMonth(item.month);
+      const { monthIndex, thaiYear } = parseMonthYearFromLabel(norm || item.month);
+      if (monthIndex >= 1 && monthIndex <= 12) {
+        const label = `${THAI_MONTHS_LOCAL[monthIndex - 1]} ${thaiYear}`;
+        monthMap.set(label, { monthIdx: monthIndex, thaiYear });
+      }
+    });
+  }
+
+  // 3. Check from project.startDate and project.endDate (if available and daily is empty/not loaded yet)
+  if (monthMap.size === 0 && project.startDate && project.startDate !== "-" && project.endDate && project.endDate !== "-") {
+    const parseSimpleThaiDate = (str: string) => {
+      if (!str) return null;
+      const parts = str.trim().split("/");
+      if (parts.length < 3) return null;
+      const d = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      let y = parseInt(parts[2], 10);
+      if (y < 2400) y += 543;
+      return { d, m, y };
+    };
+    const start = parseSimpleThaiDate(project.startDate);
+    const end = parseSimpleThaiDate(project.endDate);
+    if (start && end) {
+      let curM = start.m;
+      let curY = start.y;
+      const targetM = end.m;
+      const targetY = end.y;
+      
+      let count = 0; // prevent infinite loops
+      while (count < 100) {
+        if (curM >= 1 && curM <= 12) {
+          const label = `${THAI_MONTHS_LOCAL[curM - 1]} ${curY}`;
+          monthMap.set(label, { monthIdx: curM, thaiYear: curY });
+        }
+        if (curM === targetM && curY === targetY) {
+          break;
+        }
+        curM++;
+        if (curM > 12) {
+          curM = 1;
+          curY++;
+        }
+        count++;
+      }
+    }
+  }
+
+  // 4. Default fallback: add current month anyway
+  const today = new Date();
+  const fallbackM = today.getMonth() + 1;
+  const fallbackY = today.getFullYear() + 543;
+  const fallbackLabel = `${THAI_MONTHS_LOCAL[fallbackM - 1]} ${fallbackY}`;
+  if (!monthMap.has(fallbackLabel)) {
+    monthMap.set(fallbackLabel, { monthIdx: fallbackM, thaiYear: fallbackY });
+  }
+
+  // Convert map to list and sort by year/month descending (newest month first)
+  const options = Array.from(monthMap.entries()).map(([label, info]) => ({
+    label,
+    ...info
+  }));
+
+  return options.sort((a, b) => b.thaiYear - a.thaiYear || b.monthIdx - a.monthIdx);
+};
+
 interface ProjectCardProps {
   project: ProjectInfo;
   loading: boolean;
@@ -1591,7 +1686,24 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
     "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
     "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
   ];
-  const currentCalendarMonthLabel = `${THAI_MONTHS_LOCAL[currentMonthIdx - 1]} ${currentThaiYearVal}`;
+  const defaultLabel = `${THAI_MONTHS_LOCAL[currentMonthIdx - 1]} ${currentThaiYearVal}`;
+
+  // Get project specific months list
+  const monthOptions = React.useMemo(() => {
+    return getProjectMonths(realtimeData, project);
+  }, [realtimeData, project]);
+
+  const [selectedMonthLabel, setSelectedMonthLabel] = useState<string>("");
+
+  const activeMonthOpt = React.useMemo(() => {
+    if (selectedMonthLabel) {
+      const found = monthOptions.find(o => o.label === selectedMonthLabel);
+      if (found) return found;
+    }
+    const foundDefault = monthOptions.find(o => o.label === defaultLabel);
+    if (foundDefault) return foundDefault;
+    return monthOptions[0] || { monthIdx: currentMonthIdx, thaiYear: currentThaiYearVal, label: defaultLabel };
+  }, [monthOptions, selectedMonthLabel, defaultLabel, currentMonthIdx, currentThaiYearVal]);
 
   let currentMonthPlanBaht = 0;
   let currentMonthActualBaht = 0;
@@ -1599,8 +1711,8 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
   if (realtimeData && realtimeData.daily && realtimeData.daily.length > 0) {
     const res = getMonthlyPlanAndActualFromDaily(
       realtimeData.daily,
-      currentMonthIdx,
-      currentThaiYearVal,
+      activeMonthOpt.monthIdx,
+      activeMonthOpt.thaiYear,
       displayBudget
     );
     currentMonthPlanBaht = res.planAmount;
@@ -1671,62 +1783,64 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
         animate={{ opacity: 1, y: 0 }}
         whileHover={{ y: -4 }}
         onClick={() => onSelectProject(project)}
-        className="hidden md:flex gap-6 bg-[#0f1420] border border-white/5 p-6 rounded-3xl cursor-pointer hover:border-indigo-500/20 hover:shadow-2xl transition-all duration-300 w-full items-stretch"
+        className="hidden md:flex gap-4 lg:gap-6 bg-[#0f1420] border border-white/5 p-4 lg:p-6 rounded-3xl cursor-pointer hover:border-indigo-500/20 hover:shadow-2xl transition-all duration-300 w-full items-stretch"
       >
-        {/* Left Side (approx 30% of the card) */}
-        <div className="w-[30%] shrink-0 flex items-center gap-6 pr-4">
-          {/* Thumbnail with overlay status dots */}
-          <div className="w-32 h-32 rounded-2xl overflow-hidden shrink-0 relative bg-slate-800 shadow-lg border border-white/5">
-            <img 
-              src={project.imageUrl || `https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800`} 
-              referrerPolicy="no-referrer"
-              alt={project.name}
-              className="w-full h-full object-cover opacity-90 transition-all duration-300 group-hover:scale-105"
-            />
-            {/* Mini Badges overlay */}
-            <div className="absolute top-1.5 right-1.5 flex flex-col gap-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-white/30" title="กำลังดำเนินการ" />
-              {(!project.apiUrl && !project.sheetId) && (
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 border border-white/30 flex items-center justify-center animate-pulse" title="ไม่มีลิงก์ API">
-                  <span className="block w-1 h-1 rounded-full bg-white" />
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Project details */}
-          <div className="flex-1 min-w-0 space-y-2">
-            <h4 className="text-xl md:text-2xl font-bold text-white tracking-tight uppercase leading-snug line-clamp-2" title={project.name}>
-              {project.name}
-            </h4>
-            {project.contractor && (
-              <div className="text-xs text-indigo-400 font-normal tracking-wide truncate">
-                ผู้รับจ้าง: {project.contractor}
+        {/* Left Side (approx 35% of the card) */}
+        <div className="flex-[35_35_0%] min-w-0 flex items-center justify-center p-2 lg:p-4">
+          <div className="flex items-center gap-4 lg:gap-6 max-w-full">
+            {/* Thumbnail with overlay status dots */}
+            <div className="w-24 h-24 lg:w-32 lg:h-32 rounded-2xl overflow-hidden shrink-0 relative bg-slate-800 shadow-lg border border-white/5">
+              <img 
+                src={project.imageUrl || `https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800`} 
+                referrerPolicy="no-referrer"
+                alt={project.name}
+                className="w-full h-full object-cover opacity-90 transition-all duration-300 group-hover:scale-105"
+              />
+              {/* Mini Badges overlay */}
+              <div className="absolute top-1.5 right-1.5 flex flex-col gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-white/30" title="กำลังดำเนินการ" />
+                {(!project.apiUrl && !project.sheetId) && (
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 border border-white/30 flex items-center justify-center animate-pulse" title="ไม่มีลิงก์ API">
+                    <span className="block w-1 h-1 rounded-full bg-white" />
+                  </span>
+                )}
               </div>
-            )}
-            <div className="flex items-center gap-1.5 text-xs text-slate-400 font-light truncate">
-              <MapPin className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span className="truncate">{project.location || 'ไม่ได้ระบุสถานที่'}</span>
             </div>
-            
-            {/* Status badges */}
-            <div className="flex items-center gap-2 flex-wrap pt-0.5 font-sans">
-              <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 block" />
-                กำลังดำเนินการ
-              </span>
-              {(!project.apiUrl && !project.sheetId) && (
-                <span className="bg-rose-500/10 border border-rose-500/20 text-rose-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" />
-                  ไม่มีลิงก์ API
-                </span>
+
+            {/* Project details */}
+            <div className="flex-1 min-w-0 space-y-1.5 lg:space-y-2">
+              <h4 className="text-lg lg:text-xl xl:text-2xl font-bold text-white tracking-tight uppercase leading-snug line-clamp-2" title={project.name}>
+                {project.name}
+              </h4>
+              {project.contractor && (
+                <div className="text-xs text-indigo-400 font-normal tracking-wide truncate">
+                  ผู้รับจ้าง: {project.contractor}
+                </div>
               )}
-              {error && (
-                <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1" title={error}>
-                  <AlertCircle className="w-3 h-3 text-amber-400 animate-pulse" />
-                  {error}
+              <div className="flex items-center gap-1.5 text-xs text-slate-400 font-light truncate">
+                <MapPin className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span className="truncate">{project.location || 'ไม่ได้ระบุสถานที่'}</span>
+              </div>
+              
+              {/* Status badges */}
+              <div className="flex items-center gap-2 flex-wrap pt-0.5 font-sans">
+                <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 block" />
+                  กำลังดำเนินการ
                 </span>
-              )}
+                {(!project.apiUrl && !project.sheetId) && (
+                  <span className="bg-rose-500/10 border border-rose-500/20 text-rose-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    ไม่มีลิงก์ API
+                  </span>
+                )}
+                {error && (
+                  <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1" title={error}>
+                    <AlertCircle className="w-3 h-3 text-amber-400 animate-pulse" />
+                    {error}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1734,14 +1848,38 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
         {/* Vertical divider line */}
         <div className="w-[1px] bg-white/10 shrink-0" />
 
-        {/* Right Side (approx 60% of the card) */}
-        <div className="flex-1 flex flex-col justify-between pl-4 min-w-0">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+        {/* Right Side (65% of the card) */}
+        <div className="flex-[65_65_0%] min-w-0 flex flex-col justify-between pl-4">
+          {/* Month selector dropdown */}
+          <div className="flex items-center justify-between mb-3 bg-[#111827]/40 px-3 py-2 rounded-2xl border border-white/[0.03]" onClick={(e) => e.stopPropagation()}>
+            <span className="text-[11px] text-slate-400 font-light flex items-center gap-1.5 leading-none">
+              <Calendar className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              แผนและผลงานประจำเดือน:
+            </span>
+            <div className="relative">
+              <select
+                value={activeMonthOpt.label}
+                onChange={(e) => setSelectedMonthLabel(e.target.value)}
+                className="bg-[#1e293b]/90 text-xs text-white border border-white/10 rounded-xl px-3 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer pr-8 pl-3 appearance-none font-sans font-medium"
+              >
+                {monthOptions.map((opt) => (
+                  <option key={opt.label} value={opt.label} className="bg-slate-900 text-white">
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                <ChevronDown className="w-3.5 h-3.5" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-3 lg:gap-x-6 gap-y-3 lg:gap-y-4">
             {/* Budget */}
             <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1.5 flex flex-col justify-between">
               <div>
                 <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light leading-none">ยอดโครงการ (งบ)</span>
-                <span className="text-lg md:text-xl font-semibold text-cyan-400 font-mono block truncate mt-1.5" title={`฿${budgetNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                <span className="text-base lg:text-lg xl:text-xl font-semibold text-cyan-400 font-mono block truncate mt-1.5" title={`฿${budgetNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
                   ฿{budgetNum.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
@@ -1757,10 +1895,13 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
             
             {/* Plan Monthly */}
             <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate leading-none" title="แผนเบิกประจำเดือน (Plan)">
-                แผนเบิกประจำเดือน (Plan)
-              </span>
-              <span className="text-lg md:text-xl font-semibold text-sky-400 font-mono block truncate mt-1.5" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+              <div className="flex justify-between items-center w-full">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate leading-none" title="แผนเบิกประจำเดือน (Plan)">
+                  แผนเบิกประจำเดือน (Plan)
+                </span>
+                <span className="text-[9px] text-sky-400 font-medium font-sans">{activeMonthOpt.label.split(' ')[0]}</span>
+              </div>
+              <span className="text-base lg:text-lg xl:text-xl font-semibold text-sky-400 font-mono block truncate mt-1.5" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
                 ฿{cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
@@ -1768,8 +1909,8 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
             {/* Cumulative Payment */}
             <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1.5 flex flex-col justify-between">
               <div>
-                <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light leading-none">เบิกสะสม</span>
-                <span className="text-lg md:text-xl font-semibold text-emerald-400 font-mono block truncate mt-1.5" title={`฿${cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light leading-none">เบิกสะสม ณ เดือนปัจจุบัน</span>
+                <span className="text-base lg:text-lg xl:text-xl font-semibold text-emerald-400 font-mono block truncate mt-1.5" title={`฿${cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
                   ฿{cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
@@ -1785,10 +1926,13 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
 
             {/* Actual Monthly */}
             <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate leading-none" title="ผลงานจริงประจำเดือน (Actual)">
-                ผลงานจริงประจำเดือน (Actual)
-              </span>
-              <span className="text-lg md:text-xl font-semibold text-orange-400 font-mono block truncate mt-1.5" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+              <div className="flex justify-between items-center w-full">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate leading-none" title="ผลงานจริงประจำเดือน (Actual)">
+                  ผลงานจริงประจำเดือน (Actual)
+                </span>
+                <span className="text-[9px] text-orange-400 font-medium font-sans">{activeMonthOpt.label.split(' ')[0]}</span>
+              </div>
+              <span className="text-base lg:text-lg xl:text-xl font-semibold text-orange-400 font-mono block truncate mt-1.5" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
                 ฿{cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
@@ -1867,6 +2011,30 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
           )}
         </div>
 
+        {/* Mobile dropdown selector for the month */}
+        <div className="bg-[#111827]/40 px-3 py-2 rounded-xl border border-white/[0.03] flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
+          <span className="text-[10px] text-slate-400 font-light flex items-center gap-1.5 leading-none">
+            <Calendar className="w-3 h-3 text-indigo-400 shrink-0" />
+            แผนและผลงานประจำเดือน:
+          </span>
+          <div className="relative">
+            <select
+              value={activeMonthOpt.label}
+              onChange={(e) => setSelectedMonthLabel(e.target.value)}
+              className="bg-[#1e293b]/90 text-[10px] text-white border border-white/10 rounded-lg px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer pr-6 pl-2 appearance-none font-sans font-medium"
+            >
+              {monthOptions.map((opt) => (
+                <option key={opt.label} value={opt.label} className="bg-slate-900 text-white">
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+              <ChevronDown className="w-3 h-3" />
+            </div>
+          </div>
+        </div>
+
         {/* Grid 2x2 for parameters */}
         <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-white/5">
           <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 md:space-y-1.5 flex flex-col justify-between">
@@ -1887,7 +2055,10 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
           </div>
 
           <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
-            <span className="text-[9px] text-slate-400 font-light block leading-none truncate opacity-90" title="แผนเบิกประจำเดือน (Plan)">แผนเบิกประจำเดือน (Plan)</span>
+            <div className="flex justify-between items-center w-full">
+              <span className="text-[9px] text-slate-400 font-light block leading-none truncate opacity-90" title="แผนเบิกประจำเดือน (Plan)">แผนเบิก (Plan)</span>
+              <span className="text-[8px] text-sky-400 font-medium font-sans">{activeMonthOpt.label.split(' ')[0]}</span>
+            </div>
             <span className="text-[11px] font-semibold text-sky-400 font-mono block truncate mt-1" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
               ฿{cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
@@ -1895,7 +2066,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
 
           <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 md:space-y-1.5 flex flex-col justify-between">
             <div>
-              <span className="text-[9px] text-slate-400 font-light block leading-none">เบิกสะสม</span>
+              <span className="text-[9px] text-slate-400 font-light block leading-none">เบิกสะสม ณ เดือนปัจจุบัน</span>
               <span className="text-[11px] font-semibold text-emerald-400 font-mono block truncate mt-1" title={`฿${cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
                 ฿{cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
@@ -1911,7 +2082,10 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
           </div>
 
           <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
-            <span className="text-[9px] text-slate-400 font-light block leading-none truncate opacity-90" title="ผลงานจริงประจำเดือน (Actual)">ผลงานจริงประจำเดือน (Actual)</span>
+            <div className="flex justify-between items-center w-full">
+              <span className="text-[9px] text-slate-400 font-light block leading-none truncate opacity-90" title="ผลงานจริงประจำเดือน (Actual)">ผลงานจริง (Actual)</span>
+              <span className="text-[8px] text-orange-400 font-medium font-sans">{activeMonthOpt.label.split(' ')[0]}</span>
+            </div>
             <span className="text-[11px] font-semibold text-orange-400 font-mono block truncate mt-1" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
               ฿{cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
