@@ -657,6 +657,7 @@ export default function DashboardView({
   const user = auth.currentUser;
   const [realtimeDataMap, setRealtimeDataMap] = useState<Record<string, RealtimeProjectData>>({});
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
+  const [fetchErrorMap, setFetchErrorMap] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -691,125 +692,183 @@ export default function DashboardView({
 
   // Centralized parallel fetching logic with progressive updates
   const loadAllProjects = React.useCallback(async (force = false) => {
-    // 1. Initialize loading state for projects with APIs
+    // Clear previous errors first
+    setFetchErrorMap({});
+
+    // 1. Instantly read and display whatever we have in memory cache or localStorage
+    const cachedDataUpdates: Record<string, RealtimeProjectData> = {};
     const initialLoading: Record<string, boolean> = {};
-    projects.forEach(p => {
-      const isCached = memoryCache[p.id] && (Date.now() - memoryCache[p.id].timestamp < 60000);
-      if (p.apiUrl && (!isCached || force)) {
-        initialLoading[p.id] = true;
-      } else {
-        initialLoading[p.id] = false;
-      }
-    });
-    setLoadingMap(prev => ({ ...prev, ...initialLoading }));
 
-    // 2. Trigger concurrent promises mapped over projects for fully parallel execution
-    const promises = projects.map(async (project) => {
-      if (!project.apiUrl) {
-        // Fallback or local project info (no ApiUrl assigned)
-        const budgetVal = parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
-        const progressVal = project.progress || 0;
-        
-        let cachedNetSum = 0;
-        let cachedCumIncome = 0;
-        let cachedMonthlyDeductions: any[] = [];
-        let cachedDaily: any[] = [];
-        try {
-          const cached = localStorage.getItem(`project_api_cache_${project.id}`);
-          if (cached) {
-            const cachedObj = JSON.parse(cached);
-            const cachedRes = cachedObj.responseData;
-            if (cachedRes && cachedRes.data) {
-              const d = cachedRes.data;
-              const s = d.summary || {};
-              cachedCumIncome = parseLocalStr(s.cum_income || "0");
-              const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
-              cachedDaily = d.daily || [];
-              cachedMonthlyDeductions = parseMonthlyDeductions(dList, cachedDaily, budgetVal);
-              cachedNetSum = parseLocalStr(s.net_balance_all_months || "0") || sumDeductionsNet(dList, cachedDaily, budgetVal);
-            }
-          }
-        } catch(e){}
+    projects.forEach(project => {
+      // Check memory cache first
+      const cachedEntry = memoryCache[project.id];
+      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 60000);
 
-        setRealtimeDataMap(prev => ({
-          ...prev,
-          [project.id]: {
-            budget: budgetVal,
-            cumIncome: cachedCumIncome,
-            netBalanceAllMonths: cachedNetSum,
-            progress: progressVal,
-            plan_progress: progressVal,
-            income: (progressVal / 100) * budgetVal,
-            monthlyDeductions: cachedMonthlyDeductions,
-            daily: cachedDaily
-          }
-        }));
-        setLoadingMap(prev => ({ ...prev, [project.id]: false }));
+      if (isMemCacheValid) {
+        cachedDataUpdates[project.id] = cachedEntry.data;
+        initialLoading[project.id] = false;
         return;
       }
 
-      // Check cache validity (skip if force refreshing)
-      if (!force) {
-        const cachedEntry = memoryCache[project.id];
-        if (cachedEntry && (Date.now() - cachedEntry.timestamp < 60000)) {
-          setRealtimeDataMap(prev => ({ ...prev, [project.id]: cachedEntry.data }));
-          setLoadingMap(prev => ({ ...prev, [project.id]: false }));
-          return;
-        }
-      }
-
-      // Otherwise fetch from proxy in parallel
+      // If no valid memory cache, try localStorage instantly
       try {
-        const data = await fetchSingleProjectData(project);
-        setRealtimeDataMap(prev => ({ ...prev, [project.id]: data }));
-      } catch (err) {
-        console.error(`Error loading project ${project.name}:`, err);
-        // Fallback to local storage cache if fetch failed
-        try {
-          const cached = localStorage.getItem(`project_api_cache_${project.id}`);
-          if (cached) {
-            const cachedObj = JSON.parse(cached);
-            const cachedRes = cachedObj.responseData;
-            if (cachedRes && cachedRes.data) {
-              const d = cachedRes.data;
-              const s = d.summary || {};
-              const budgetVal = parseLocalStr(s.budget) || parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
-              let progressVal = parseLocalStr(s.actual_cum);
-              if (progressVal > 0 && progressVal <= 1 && !String(s.actual_cum || '').includes('%')) {
-                progressVal = progressVal * 100;
-              }
-              let planVal = parseLocalStr(s.plan_cum);
-              if (planVal > 0 && planVal <= 1 && !String(s.plan_cum || '').includes('%')) {
-                planVal = planVal * 100;
-              }
-              const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
-              const cachedDailyList = d.daily || [];
-              const parsedMD = parseMonthlyDeductions(dList, cachedDailyList, budgetVal);
-              const cachedNetSum = parseLocalStr(s.net_balance_all_months || "0") || sumDeductionsNet(dList, cachedDailyList, budgetVal);
-
-              setRealtimeDataMap(prev => ({
-                ...prev,
-                [project.id]: {
-                  budget: budgetVal,
-                  cumIncome: parseLocalStr(s.cum_income || "0"),
-                  netBalanceAllMonths: cachedNetSum,
-                  progress: progressVal,
-                  plan_progress: planVal,
-                  income: (progressVal / 100) * budgetVal,
-                  monthlyDeductions: parsedMD,
-                  daily: cachedDailyList
-                }
-              }));
+        const cached = localStorage.getItem(`project_api_cache_${project.id}`);
+        if (cached) {
+          const cachedObj = JSON.parse(cached);
+          const cachedRes = cachedObj.responseData;
+          if (cachedRes && cachedRes.data) {
+            const d = cachedRes.data;
+            const s = d.summary || {};
+            const budgetVal = parseLocalStr(s.budget) || parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
+            let progressVal = parseLocalStr(s.actual_cum);
+            if (progressVal > 0 && progressVal <= 1 && !String(s.actual_cum || '').includes('%')) {
+              progressVal = progressVal * 100;
             }
+            let planVal = parseLocalStr(s.plan_cum);
+            if (planVal > 0 && planVal <= 1 && !String(s.plan_cum || '').includes('%')) {
+              planVal = planVal * 100;
+            }
+            const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
+            const cachedDailyList = d.daily || [];
+            const parsedMD = parseMonthlyDeductions(dList, cachedDailyList, budgetVal);
+            const cachedNetSum = parseLocalStr(s.net_balance_all_months || "0") || sumDeductionsNet(dList, cachedDailyList, budgetVal);
+
+            cachedDataUpdates[project.id] = {
+              budget: budgetVal,
+              cumIncome: parseLocalStr(s.cum_income || "0"),
+              netBalanceAllMonths: cachedNetSum,
+              progress: progressVal,
+              plan_progress: planVal,
+              income: (progressVal / 100) * budgetVal,
+              monthlyDeductions: parsedMD,
+              daily: cachedDailyList
+            };
           }
-        } catch (innerErr) {}
-      } finally {
-        setLoadingMap(prev => ({ ...prev, [project.id]: false }));
+        }
+      } catch (e) {}
+
+      if (project.apiUrl) {
+        // If it has API, trigger fetching in background
+        initialLoading[project.id] = true;
+      } else {
+        // Local project with no API
+        const budgetVal = parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
+        const progressVal = project.progress || 0;
+        if (!cachedDataUpdates[project.id]) {
+          cachedDataUpdates[project.id] = {
+            budget: budgetVal,
+            cumIncome: 0,
+            netBalanceAllMonths: 0,
+            progress: progressVal,
+            plan_progress: progressVal,
+            income: (progressVal / 100) * budgetVal,
+            monthlyDeductions: [],
+            daily: []
+          };
+        }
+        initialLoading[project.id] = false;
       }
     });
 
-    // Run parallel promises immediately and wait for them all to settle
-    await Promise.all(promises);
+    // Populate states instantly so cards are shown right away if we have cache
+    if (Object.keys(cachedDataUpdates).length > 0) {
+      setRealtimeDataMap(prev => ({ ...prev, ...cachedDataUpdates }));
+    }
+    setLoadingMap(prev => ({ ...prev, ...initialLoading }));
+
+    // 2. Identify projects that actually need to fetch from remote
+    const projectsToFetch = projects.filter(project => {
+      if (!project.apiUrl) return false;
+      if (force) return true;
+      const cachedEntry = memoryCache[project.id];
+      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 60000);
+      return !isMemCacheValid;
+    });
+
+    if (projectsToFetch.length > 0) {
+      let index = 0;
+
+      // Define a concurrent queue worker
+      const fetchWorker = async () => {
+        while (index < projectsToFetch.length) {
+          const currentIdx = index++;
+          const project = projectsToFetch[currentIdx];
+          if (!project) break;
+
+          try {
+            // Promise race for 45s timeout
+            const fetchPromise = fetchSingleProjectData(project);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error("Timeout")), 45000);
+            });
+
+            const data = await Promise.race([fetchPromise, timeoutPromise]);
+            setRealtimeDataMap(prev => ({ ...prev, [project.id]: data }));
+          } catch (err: any) {
+            console.error(`Error loading project ${project.name}:`, err);
+            
+            // Map the specific error to show on the card
+            setFetchErrorMap(prev => ({ 
+              ...prev, 
+              [project.id]: err.message === "Timeout" 
+                ? "เชื่อมต่อหมดเวลา (45 วินาที) โปรดลองรีเฟรชใหม่" 
+                : `ดาวน์โหลดไม่สำเร็จ: ${err.message || 'ข้อผิดพลาดระบบ'}` 
+            }));
+
+            // Fallback to local storage cache if fetch failed
+            try {
+              const cached = localStorage.getItem(`project_api_cache_${project.id}`);
+              if (cached) {
+                const cachedObj = JSON.parse(cached);
+                const cachedRes = cachedObj.responseData;
+                if (cachedRes && cachedRes.data) {
+                  const d = cachedRes.data;
+                  const s = d.summary || {};
+                  const budgetVal = parseLocalStr(s.budget) || parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
+                  let progressVal = parseLocalStr(s.actual_cum);
+                  if (progressVal > 0 && progressVal <= 1 && !String(s.actual_cum || '').includes('%')) {
+                    progressVal = progressVal * 100;
+                  }
+                  let planVal = parseLocalStr(s.plan_cum);
+                  if (planVal > 0 && planVal <= 1 && !String(s.plan_cum || '').includes('%')) {
+                    planVal = planVal * 100;
+                  }
+                  const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
+                  const cachedDailyList = d.daily || [];
+                  const parsedMD = parseMonthlyDeductions(dList, cachedDailyList, budgetVal);
+                  const cachedNetSum = parseLocalStr(s.net_balance_all_months || "0") || sumDeductionsNet(dList, cachedDailyList, budgetVal);
+
+                  setRealtimeDataMap(prev => {
+                    // Only write if we don't have active data in prev map
+                    if (prev[project.id]) return prev;
+                    return {
+                      ...prev,
+                      [project.id]: {
+                        budget: budgetVal,
+                        cumIncome: parseLocalStr(s.cum_income || "0"),
+                        netBalanceAllMonths: cachedNetSum,
+                        progress: progressVal,
+                        plan_progress: planVal,
+                        income: (progressVal / 100) * budgetVal,
+                        monthlyDeductions: parsedMD,
+                        daily: cachedDailyList
+                      }
+                    };
+                  });
+                }
+              }
+            } catch (innerErr) {}
+          } finally {
+            setLoadingMap(prev => ({ ...prev, [project.id]: false }));
+          }
+        }
+      };
+
+      // Limit concurrent requests to 5 to avoid browser request queuing issues
+      const concurrencyLimit = 5;
+      const workers = Array.from({ length: Math.min(concurrencyLimit, projectsToFetch.length) }, () => fetchWorker());
+      await Promise.all(workers);
+    }
   }, [projects]);
 
   React.useEffect(() => {
@@ -1043,6 +1102,19 @@ export default function DashboardView({
   // ON TARGET if overall progressive actual avg is >= plan avg
   const isTargetMet = masterSummary.overallProgress >= masterSummary.overallProgressPlan;
   
+  const totalBudgetVal = masterSummary.totalBudget;
+  const totalCumIncomeVal = masterSummary.totalCumIncome;
+  const totalRemainingVal = masterSummary.remainingPayment;
+
+  const totalCumIncomePct = totalBudgetVal > 0 ? (totalCumIncomeVal / totalBudgetVal) * 105 - 5 ? (totalCumIncomeVal / totalBudgetVal) * 100 : 0 : 0;
+  // Let's keep it simple:
+  // (totalCumIncomeVal / totalBudgetVal) * 100
+  const totalCumIncomePctReal = totalBudgetVal > 0 ? (totalCumIncomeVal / totalBudgetVal) * 100 : 0;
+  const totalCumIncomePctBar = Math.min(100, totalCumIncomePctReal);
+
+  const totalRemainingPctReal = totalBudgetVal > 0 ? (totalRemainingVal / totalBudgetVal) * 100 : 0;
+  const totalRemainingPctBar = Math.min(100, totalRemainingPctReal);
+  
   return (
     <div className="flex min-h-screen bg-[#070b14] text-slate-100 font-sans relative overflow-x-hidden">
       {/* Mobile Backdrop Overlay (only displayed under lg:hidden breakpoint) */}
@@ -1188,6 +1260,39 @@ export default function DashboardView({
                 </div>
               </div>
 
+              {/* Live API Sync Status Bar */}
+              <div className="mb-6">
+                {isRefreshing || Object.values(loadingMap).some(Boolean) ? (
+                  <div className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 px-5 py-3.5 rounded-2xl flex items-center justify-between gap-3 shadow-lg shadow-cyan-950/15">
+                    <div className="flex items-center gap-2.5">
+                      <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" />
+                      <span className="text-xs sm:text-sm font-sans font-medium">กำลังโหลดข้อมูลและเชื่อมต่อ Google Sheets API...</span>
+                    </div>
+                    <div className="w-24 h-1.5 bg-cyan-950 rounded-full overflow-hidden shrink-0 hidden sm:block">
+                      <div className="h-full bg-cyan-400 animate-pulse w-full" style={{ animationDuration: '1s' }} />
+                    </div>
+                  </div>
+                ) : Object.keys(fetchErrorMap).length > 0 ? (
+                  <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-5 py-3.5 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-lg shadow-amber-950/15">
+                    <div className="flex items-center gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-amber-400 animate-pulse" />
+                      <span className="text-xs sm:text-sm font-sans font-medium">✗ พบปัญหาหารดึงข้อมูล {Object.keys(fetchErrorMap).length} โครงการ (โหลดจากความจำสำรองแทน)</span>
+                    </div>
+                    <button 
+                      onClick={() => loadAllProjects(true)}
+                      className="px-4 py-1.5 bg-amber-500 text-slate-950 rounded-xl text-[11px] font-sans font-bold hover:bg-amber-400 active:scale-95 transition-all w-fit cursor-pointer"
+                    >
+                      ลองใหม่อีกครั้ง (Retry All)
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-5 py-3 rounded-2xl flex items-center gap-2.5 shadow-lg shadow-emerald-950/10">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)] animate-pulse" />
+                    <span className="text-xs sm:text-sm font-sans font-medium font-light">✓ ดึงข้อมูล Google Sheets ทั้งหมดเสร็จสมบูรณ์ ({new Date().toLocaleTimeString("th-TH")} น.)</span>
+                  </div>
+                )}
+              </div>
+
               <header>
                 <div className="bg-gradient-to-br from-[#2a3eb1] to-[#1e2a8a] py-5 px-6 sm:py-6 sm:px-8 rounded-[24px] sm:rounded-[32px] shadow-xl relative overflow-hidden flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div className="absolute top-1/2 -translate-y-1/2 right-4 p-4 opacity-5 pointer-events-none">
@@ -1267,25 +1372,52 @@ export default function DashboardView({
                           </div>
                         </div>
                         
-                        <div className="space-y-1.5 pt-1">
-                          <div className="flex justify-between items-center border-b border-white/5 pb-1">
-                            <span className="text-[11px] font-light text-slate-200 font-medium">งบรวม:</span>
-                            <span className="text-sm sm:text-base font-semibold text-cyan-400 font-mono">
-                              ฿{masterSummary.totalBudget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
+                        <div className="space-y-3.5 pt-1">
+                          <div className="border-b border-white/5 pb-2">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-[11px] font-light text-slate-200 font-medium">งบรวม:</span>
+                              <span className="text-sm sm:text-base font-semibold text-cyan-400 font-mono">
+                                ฿{masterSummary.totalBudget.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 text-right font-light leading-none">
+                              คิดเป็น 100.00% ของงบรวม
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden mt-1">
+                              <div className="h-full bg-cyan-500 rounded-full" style={{ width: '100%' }} />
+                            </div>
                           </div>
-                          <div className="flex justify-between items-center border-b border-white/5 pb-1">
-                            <span className="text-[11px] font-light text-slate-200 font-medium font-medium">เบิกสะสม:</span>
-                            <span className="text-sm sm:text-base font-semibold text-emerald-400 font-mono">
-                              ฿{masterSummary.totalCumIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
+
+                          <div className="border-b border-white/5 pb-2">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-[11px] font-light text-slate-200 font-medium font-medium">เบิกสะสม:</span>
+                              <span className="text-sm sm:text-base font-semibold text-emerald-400 font-mono">
+                                ฿{masterSummary.totalCumIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 text-right font-light leading-none">
+                              คิดเป็น {totalCumIncomePctReal.toFixed(2)}% ของงบรวม
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden mt-1">
+                              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${totalCumIncomePctBar}%` }} />
+                            </div>
                           </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-[11px] font-light text-slate-200 font-medium">เหลือเบิก:</span>
-                            <span className="text-sm sm:text-base font-semibold text-orange-400 font-mono">
-                              ฿{masterSummary.remainingPayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
+
+                          <div className="border-b border-white/5 pb-2">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-[11px] font-light text-slate-200 font-medium">เหลือเบิก:</span>
+                              <span className="text-sm sm:text-base font-semibold text-orange-400 font-mono">
+                                ฿{masterSummary.remainingPayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 text-right font-light leading-none">
+                              คิดเป็น {totalRemainingPctReal.toFixed(2)}% ของงบรวม
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden mt-1">
+                              <div className="h-full bg-orange-500 rounded-full" style={{ width: `${totalRemainingPctBar}%` }} />
+                            </div>
                           </div>
+
                           <div className="flex justify-end pt-0.5 leading-none">
                             <span className="text-[9px] text-slate-400 font-light opacity-60">
                               (ไม่รวม Vat 7%)
@@ -1406,7 +1538,8 @@ export default function DashboardView({
                       {/* Existing Project Cards - loading states handled progressively */}
                       {filteredProjects.map((project) => {
                         const realtimeData = realtimeDataMap[project.id] || null;
-                        const isLoading = loadingMap[project.id] === true;
+                        const isLoading = loadingMap[project.id] === true && !realtimeData;
+                        const cardError = fetchErrorMap[project.id];
 
                         return (
                           <ProjectCard 
@@ -1417,6 +1550,7 @@ export default function DashboardView({
                             onSelectProject={onSelectProject}
                             onEditProject={onEditProject}
                             userRole={userRole}
+                            error={cardError}
                           />
                         );
                       })}
@@ -1439,9 +1573,10 @@ interface ProjectCardProps {
   onSelectProject: (p: ProjectInfo) => void;
   onEditProject: (p: ProjectInfo) => void;
   userRole?: 'manager' | 'engineer' | null;
+  error?: string;
 }
 
-const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeData, onSelectProject, onEditProject, userRole }) => {
+const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeData, onSelectProject, onEditProject, userRole, error }) => {
   const displayBudget = realtimeData ? realtimeData.budget : (parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0"));
   
   // Calculate cumulative payment up to cutoff using the new daily cumulative helper
@@ -1478,6 +1613,11 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
     const num = parseFloat(cleaned);
     return isNaN(num) ? 0 : num;
   };
+
+  const budgetNum = cleanNumString(displayBudget);
+  const cumIncomeNum = cleanNumString(displayCumIncome);
+  const projectCumPct = budgetNum > 0 ? (cumIncomeNum / budgetNum) * 100 : 0;
+  const projectCumPctBar = Math.min(100, projectCumPct);
 
   if (loading) {
     return (
@@ -1533,15 +1673,15 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
         onClick={() => onSelectProject(project)}
         className="hidden md:flex gap-6 bg-[#0f1420] border border-white/5 p-6 rounded-3xl cursor-pointer hover:border-indigo-500/20 hover:shadow-2xl transition-all duration-300 w-full items-stretch"
       >
-        {/* Left Side (approx 40% of the card) */}
-        <div className="w-[40%] shrink-0 flex items-center gap-5 pr-4">
+        {/* Left Side (approx 30% of the card) */}
+        <div className="w-[30%] shrink-0 flex items-center gap-6 pr-4">
           {/* Thumbnail with overlay status dots */}
-          <div className="w-24 h-24 rounded-2xl overflow-hidden shrink-0 relative bg-slate-800 shadow-md">
+          <div className="w-32 h-32 rounded-2xl overflow-hidden shrink-0 relative bg-slate-800 shadow-lg border border-white/5">
             <img 
               src={project.imageUrl || `https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800`} 
               referrerPolicy="no-referrer"
               alt={project.name}
-              className="w-full h-full object-cover opacity-90"
+              className="w-full h-full object-cover opacity-90 transition-all duration-300 group-hover:scale-105"
             />
             {/* Mini Badges overlay */}
             <div className="absolute top-1.5 right-1.5 flex flex-col gap-1">
@@ -1556,7 +1696,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
 
           {/* Project details */}
           <div className="flex-1 min-w-0 space-y-2">
-            <h4 className="text-lg font-bold text-white tracking-tight uppercase leading-snug line-clamp-2" title={project.name}>
+            <h4 className="text-xl md:text-2xl font-bold text-white tracking-tight uppercase leading-snug line-clamp-2" title={project.name}>
               {project.name}
             </h4>
             {project.contractor && (
@@ -1570,7 +1710,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
             </div>
             
             {/* Status badges */}
-            <div className="flex items-center gap-2 flex-wrap pt-0.5">
+            <div className="flex items-center gap-2 flex-wrap pt-0.5 font-sans">
               <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 block" />
                 กำลังดำเนินการ
@@ -1579,6 +1719,12 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
                 <span className="bg-rose-500/10 border border-rose-500/20 text-rose-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />
                   ไม่มีลิงก์ API
+                </span>
+              )}
+              {error && (
+                <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full text-[10px] font-normal flex items-center gap-1" title={error}>
+                  <AlertCircle className="w-3 h-3 text-amber-400 animate-pulse" />
+                  {error}
                 </span>
               )}
             </div>
@@ -1590,39 +1736,59 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
 
         {/* Right Side (approx 60% of the card) */}
         <div className="flex-1 flex flex-col justify-between pl-4 min-w-0">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3.5">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
             {/* Budget */}
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light">ยอดโครงการ (งบ)</span>
-              <span className="text-lg md:text-xl font-semibold text-cyan-400 font-mono block truncate" title={`฿${cleanNumString(displayBudget).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-                ฿{cleanNumString(displayBudget).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
+            <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1.5 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light leading-none">ยอดโครงการ (งบ)</span>
+                <span className="text-lg md:text-xl font-semibold text-cyan-400 font-mono block truncate mt-1.5" title={`฿${budgetNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                  ฿{budgetNum.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-400 font-light leading-none mt-1">
+                  คิดเป็น 100.00% ของงบ
+                </div>
+                <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden mt-1.5">
+                  <div className="h-full bg-cyan-400 rounded-full" style={{ width: '100%' }} />
+                </div>
+              </div>
             </div>
             
             {/* Plan Monthly */}
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate" title="แผนเบิกประจำเดือน (Plan)">
+            <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate leading-none" title="แผนเบิกประจำเดือน (Plan)">
                 แผนเบิกประจำเดือน (Plan)
               </span>
-              <span className="text-lg md:text-xl font-semibold text-sky-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+              <span className="text-lg md:text-xl font-semibold text-sky-400 font-mono block truncate mt-1.5" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
                 ฿{cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
 
             {/* Cumulative Payment */}
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light">เบิกสะสม</span>
-              <span className="text-lg md:text-xl font-semibold text-emerald-400 font-mono block truncate" title={`฿${cleanNumString(displayCumIncome).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-                ฿{cleanNumString(displayCumIncome).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
+            <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1.5 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light leading-none">เบิกสะสม</span>
+                <span className="text-lg md:text-xl font-semibold text-emerald-400 font-mono block truncate mt-1.5" title={`฿${cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                  ฿{cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-400 font-light leading-none mt-1">
+                  คิดเป็น {projectCumPct.toFixed(2)}% ของงบ
+                </div>
+                <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden mt-1.5">
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${projectCumPctBar}%` }} />
+                </div>
+              </div>
             </div>
 
             {/* Actual Monthly */}
-            <div className="space-y-1">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate" title="ผลงานจริงประจำเดือน (Actual)">
+            <div className="bg-[#141b2e]/30 p-3.5 rounded-2xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-light truncate leading-none" title="ผลงานจริงประจำเดือน (Actual)">
                 ผลงานจริงประจำเดือน (Actual)
               </span>
-              <span className="text-lg md:text-xl font-semibold text-orange-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+              <span className="text-lg md:text-xl font-semibold text-orange-400 font-mono block truncate mt-1.5" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
                 ฿{cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
@@ -1682,7 +1848,7 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
         </div>
 
         {/* Status badges */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap font-sans">
           <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-0.5 rounded-full text-[9px] font-light flex items-center gap-1.2">
             <span className="w-1.2 h-1.2 rounded-full bg-emerald-400 block" />
             กำลังดำเนินการ
@@ -1693,34 +1859,60 @@ const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeDat
               ไม่มีลิงก์ API
             </span>
           )}
+          {error && (
+            <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2.5 py-0.5 rounded-full text-[9px] font-light flex items-center gap-1" title={error}>
+              <AlertCircle className="w-2.5 h-2.5 text-amber-400" />
+              {error}
+            </span>
+          )}
         </div>
 
         {/* Grid 2x2 for parameters */}
         <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-white/5">
-          <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
-            <span className="text-[9px] text-slate-400 font-light block leading-none">ยอดโครงการ (งบ)</span>
-            <span className="text-[11px] font-semibold text-cyan-400 font-mono block truncate" title={`฿${cleanNumString(displayBudget).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-              ฿{cleanNumString(displayBudget).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
+          <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 md:space-y-1.5 flex flex-col justify-between">
+            <div>
+              <span className="text-[9px] text-slate-400 font-light block leading-none">ยอดโครงการ (งบ)</span>
+              <span className="text-[11px] font-semibold text-cyan-400 font-mono block truncate mt-1" title={`฿${budgetNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                ฿{budgetNum.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div>
+              <div className="text-[8px] text-slate-400 font-light leading-none">
+                คิดเป็น 100.00% ของงบ
+              </div>
+              <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden mt-1">
+                <div className="h-full bg-cyan-400 rounded-full" style={{ width: '100%' }} />
+              </div>
+            </div>
           </div>
 
-          <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
-            <span className="text-[9px] text-slate-400 font-light block leading-none truncate" title="แผนเบิกประจำเดือน (Plan)">แผนเบิกประจำเดือน (Plan)</span>
-            <span className="text-[11px] font-semibold text-sky-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+          <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
+            <span className="text-[9px] text-slate-400 font-light block leading-none truncate opacity-90" title="แผนเบิกประจำเดือน (Plan)">แผนเบิกประจำเดือน (Plan)</span>
+            <span className="text-[11px] font-semibold text-sky-400 font-mono block truncate mt-1" title={`฿${cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
               ฿{cleanNumString(currentMonthPlanBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
 
-          <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
-            <span className="text-[9px] text-slate-400 font-light block leading-none">เบิกสะสม</span>
-            <span className="text-[11px] font-semibold text-emerald-400 font-mono block truncate" title={`฿${cleanNumString(displayCumIncome).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
-              ฿{cleanNumString(displayCumIncome).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
+          <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 md:space-y-1.5 flex flex-col justify-between">
+            <div>
+              <span className="text-[9px] text-slate-400 font-light block leading-none">เบิกสะสม</span>
+              <span className="text-[11px] font-semibold text-emerald-400 font-mono block truncate mt-1" title={`฿${cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+                ฿{cumIncomeNum.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div>
+              <div className="text-[8px] text-slate-400 font-light leading-none">
+                คิดเป็น {projectCumPct.toFixed(2)}% ของงบ
+              </div>
+              <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden mt-1">
+                <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${projectCumPctBar}%` }} />
+              </div>
+            </div>
           </div>
 
-          <div className="bg-slate-900/40 p-2.5 rounded-xl border border-white/[0.03] space-y-0.5">
-            <span className="text-[9px] text-slate-400 font-light block leading-none truncate" title="ผลงานจริงประจำเดือน (Actual)">ผลงานจริงประจำเดือน (Actual)</span>
-            <span className="text-[11px] font-semibold text-orange-400 font-mono block truncate" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
+          <div className="bg-slate-900/40 p-2 rounded-xl border border-white/[0.03] space-y-1 flex flex-col justify-center">
+            <span className="text-[9px] text-slate-400 font-light block leading-none truncate opacity-90" title="ผลงานจริงประจำเดือน (Actual)">ผลงานจริงประจำเดือน (Actual)</span>
+            <span className="text-[11px] font-semibold text-orange-400 font-mono block truncate mt-1" title={`฿${cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`}>
               ฿{cleanNumString(currentMonthActualBaht).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>

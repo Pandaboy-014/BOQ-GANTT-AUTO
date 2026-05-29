@@ -529,11 +529,33 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
     return "";
   };
 
-  const fetchExternalData = useCallback(async () => {
+  const fetchExternalData = useCallback(async (force = false) => {
     if (!project.apiUrl) {
       setIsSyncing(false);
       return;
     }
+
+    // Check cache validity (60s expiry)
+    if (!force) {
+      try {
+        const cached = localStorage.getItem(`project_api_cache_${project.id}`);
+        if (cached) {
+          const cachedObj = JSON.parse(cached);
+          if (cachedObj && cachedObj.lastSync) {
+            const cacheTime = new Date(cachedObj.lastSync).getTime();
+            const now = new Date().getTime();
+            if (now - cacheTime < 60000) {
+              console.log(`Cache is fresh (${(now - cacheTime)/1000}s old) for project ${project.id}. Skipping live sync.`);
+              setIsSyncing(false);
+              return;
+            }
+          }
+        }
+      } catch (cacheErr) {
+        console.warn("Failed caching checks in DetailView:", cacheErr);
+      }
+    }
+
     setIsSyncing(true);
     setFetchError(null);
 
@@ -750,6 +772,72 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       setIsSyncing(false);
     }
   }, [project.apiUrl, progress, externalPlanProgress, project.id]);
+
+  // Pre-populate dashMonthOptions from cached apiData on initial mount
+  useEffect(() => {
+    if (apiData && apiData.data?.summary && dashMonthOptions.length === 0) {
+      try {
+        const resData = apiData.data;
+        const s = resData.summary;
+        const startDateStr = s.start_date || "-";
+        const endDateStr = s.end_date || "-";
+        
+        const generatedOptions: any[] = [];
+        const startD = parseThaiDate(startDateStr);
+        const endD = parseThaiDate(endDateStr);
+        
+        if (startD && endD) {
+          let curMonth = startD.getMonth(); // 0-11
+          let curYear = startD.getFullYear();
+          const endMonth = endD.getMonth(); // 0-11
+          const endYear = endD.getFullYear();
+          
+          while (curYear < endYear || (curYear === endYear && curMonth <= endMonth)) {
+            const thaiYear = curYear + 543;
+            const monthLabel = `${THAI_MONTH_NAMES[curMonth]} ${thaiYear}`;
+            const key = `${curMonth + 1}-${thaiYear}`;
+            generatedOptions.push({
+              key,
+              label: monthLabel,
+              month: curMonth + 1,
+              year: thaiYear
+            });
+            
+            curMonth++;
+            if (curMonth > 11) {
+              curMonth = 0;
+              curYear++;
+            }
+          }
+        }
+
+        if (generatedOptions.length > 0) {
+          let initialSelectedKey = "";
+          let foundKey = "";
+          const dailyList = resData.daily || [];
+          for (let i = generatedOptions.length - 1; i >= 0; i--) {
+            const opt = generatedOptions[i];
+            const { actualSum } = getMonthlySum(dailyList, opt.month, opt.year);
+            if (actualSum > 0) {
+              foundKey = opt.key;
+              break;
+            }
+          }
+          
+          if (foundKey) {
+            initialSelectedKey = foundKey;
+          } else {
+            initialSelectedKey = generatedOptions[0]?.key || "";
+          }
+
+          setDashMonthOptions(generatedOptions);
+          setSelectedDashMonth(prev => prev || initialSelectedKey);
+        }
+      } catch (e) {
+        console.error("Error setting initial cached options:", e);
+      }
+    }
+  }, [apiData, dashMonthOptions.length]);
 
   useEffect(() => {
     if (project.apiUrl) {
@@ -1117,35 +1205,39 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       };
     }
 
+    const isFetchingOrEmpty = !apiData && !rawRows;
+    const ph = isFetchingOrEmpty ? "—" : "0.00";
+    const phPct = isFetchingOrEmpty ? "—" : "0.00%";
+
     return {
-      projectBudget: summaryData.projectBudget || "0.00",
+      projectBudget: summaryData.projectBudget && summaryData.projectBudget !== "0" && summaryData.projectBudget !== "0.00" ? summaryData.projectBudget : ph,
       overallPlan: {
-        monthly: summaryData.planMonthlyPct ? formatPct(summaryData.planMonthlyPct) : "0.00%",
-        cumulative: summaryData.planTotal || "0.00%"
+        monthly: summaryData.planMonthlyPct ? formatPct(summaryData.planMonthlyPct) : phPct,
+        cumulative: summaryData.planTotal || phPct
       },
       overallActual: {
-        monthly: summaryData.actualMonthlyPct ? formatPct(summaryData.actualMonthlyPct) : "0.00%",
-        cumulative: summaryData.actualTotal || "0.00%"
+        monthly: summaryData.actualMonthlyPct ? formatPct(summaryData.actualMonthlyPct) : phPct,
+        cumulative: summaryData.actualTotal || phPct
       },
-      steelConcreteGirder: "0.00",
-      otherMaterials: "0.00",
-      vat7: "0.00",
-      withholdingTax3: "0.00",
-      warrantyRetainage10: "0.00",
-      monthlyDeduction: summaryData.monthlyDeduction || "0.00",
+      steelConcreteGirder: ph,
+      otherMaterials: ph,
+      vat7: ph,
+      withholdingTax3: ph,
+      warrantyRetainage10: ph,
+      monthlyDeduction: summaryData.monthlyDeduction && summaryData.monthlyDeduction !== "0" && summaryData.monthlyDeduction !== "0.00" ? summaryData.monthlyDeduction : ph,
       monthlyPlan: {
-        pct: summaryData.planMonthlyPct ? formatPct(summaryData.planMonthlyPct) : "0.00%",
-        amt: "0.00"
+        pct: summaryData.planMonthlyPct ? formatPct(summaryData.planMonthlyPct) : phPct,
+        amt: ph
       },
       monthlyActual: {
-        pct: summaryData.actualMonthlyPct ? formatPct(summaryData.actualMonthlyPct) : "0.00%",
-        amt: "0.00"
+        pct: summaryData.actualMonthlyPct ? formatPct(summaryData.actualMonthlyPct) : phPct,
+        amt: ph
       },
-      cumulativePayment: summaryData.cumulativePayment || "0.00",
-      remainingPayment: "0.00",
-      netBalance: summaryData.netBalance || "0.00",
+      cumulativePayment: summaryData.cumulativePayment && summaryData.cumulativePayment !== "0" && summaryData.cumulativePayment !== "0.00" ? summaryData.cumulativePayment : ph,
+      remainingPayment: ph,
+      netBalance: summaryData.netBalance && summaryData.netBalance !== "0" && summaryData.netBalance !== "0.00" ? summaryData.netBalance : ph,
       netBalanceRaw: 0,
-      netBalanceAllMonths: (summaryData as any).netBalanceAllMonths || "0.00"
+      netBalanceAllMonths: (summaryData as any).netBalanceAllMonths && (summaryData as any).netBalanceAllMonths !== "0" && (summaryData as any).netBalanceAllMonths !== "0.00" ? (summaryData as any).netBalanceAllMonths : ph
     };
   }, [rawRows, apiData, selectedDashMonth, dashMonthOptions, progress, externalPlanProgress, summaryData]);
 
@@ -1704,6 +1796,20 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
 
   return (
     <div className="min-h-screen bg-slate-900 p-4 lg:p-6 relative font-sans text-slate-100 overflow-x-hidden">
+      <style>{`
+        @keyframes detailSyncLoader {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .detail-sync-bar {
+          background-size: 200% auto;
+          animation: detailSyncLoader 1.5s linear infinite;
+        }
+      `}</style>
+      {isSyncing && (
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-cyan-400 via-indigo-500 to-cyan-400 detail-sync-bar z-50 shadow-[0_0_8px_rgba(6,182,212,0.6)]" />
+      )}
       <div className="max-w-full w-full mx-auto space-y-8 px-4 lg:px-6">
         <header className="space-y-4">
         <div className="flex items-center gap-6">
@@ -1826,10 +1932,28 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                   CUMULATIVE PROJECT PROGRESS & TIMELINE ANALYSIS
                 </p>
               </div>
-              <div className="px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full text-xs font-light w-fit flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
-                <span>ระบบเชื่อมต่อเชื่อมโยงข้อมูลปกติ</span>
-              </div>
+              {isSyncing ? (
+                <div className="px-4 py-1.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded-full text-xs font-light w-fit flex items-center gap-2 animate-pulse">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>กำลังปรับปรุงข้อมูล...</span>
+                </div>
+              ) : fetchError ? (
+                <div className="px-4 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-450 rounded-full text-xs font-light w-fit flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse" />
+                  <span>✗ หลุดจากเซิร์ฟเวอร์หลัก</span>
+                  <button 
+                    onClick={() => fetchExternalData(true)}
+                    className="ml-1 px-2.5 py-0.5 bg-rose-500 hover:bg-rose-600 text-white rounded text-[10px] font-sans font-semibold transition-all active:scale-95"
+                  >
+                    ลองใหม่
+                  </button>
+                </div>
+              ) : (
+                <div className="px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-450 rounded-full text-xs font-light w-fit flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                  <span>ระบบเชื่อมโยงข้อมูลปกติ (ข้อมูลล่าสุด {lastSync ? lastSync.toLocaleTimeString("th-TH") : "— น."})</span>
+                </div>
+              )}
             </div>
 
             {/* Two Main Cards Grid - styled beautifully like Dashboard summary cards */}
@@ -1926,11 +2050,18 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
         {project.apiUrl ? (
           fetchError && !lastSync ? (
             <div className="text-center p-12 bg-slate-900 border border-rose-500/20 rounded-[40px] max-w-7xl mx-auto my-6 shadow-lg shadow-rose-950/20">
-              <div className="inline-flex items-center justify-center p-4 bg-rose-500/10 rounded-full border border-rose-500/30 text-rose-400 mb-4 animate-pulse">
+              <div className="inline-flex items-center justify-center p-4 bg-rose-500/10 rounded-full border border-rose-500/30 text-rose-450 mb-4">
                 <AlertCircle className="w-8 h-8" />
               </div>
               <h4 className="text-lg font-normal text-white mb-2">เชื่อมต่อข้อมูลไม่สำเร็จ</h4>
-              <p className="text-rose-400 text-sm max-w-md mx-auto">{fetchError}</p>
+              <p className="text-rose-400 text-sm max-w-md mx-auto mb-6">{fetchError}</p>
+              <button 
+                onClick={() => fetchExternalData(true)}
+                className="mx-auto flex items-center gap-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 active:scale-95 text-white text-xs px-6 py-3.5 rounded-2xl font-sans font-semibold shadow-xl shadow-rose-500/10 transition-all cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                เชื่อมต่อใหม่อีกครั้ง / RETRY CONNECTION
+              </button>
             </div>
           ) : isSyncing && !lastSync ? (
             <div className="w-full space-y-6 max-w-7xl mx-auto mb-6 animate-pulse">
@@ -1984,10 +2115,28 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                        </select>
                      </div>
                    )}
-                   <div className="flex items-center gap-2 px-4 py-2.5 bg-white/5 rounded-2xl border border-white/10 text-xs text-slate-300">
-                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
-                     <span>อัปเดตล่าสุด: {lastSync ? lastSync.toLocaleTimeString("en-US", { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true }) : new Date().toLocaleTimeString("en-US", { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true })}</span>
-                   </div>
+                   {isSyncing ? (
+                     <div className="flex items-center gap-2 px-4 py-2.5 bg-cyan-500/10 rounded-2xl border border-cyan-500/20 text-xs text-cyan-400 animate-pulse">
+                       <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                       <span className="font-sans font-medium">กำลังปรับปรุงข้อมูล...</span>
+                     </div>
+                   ) : fetchError ? (
+                     <div className="flex items-center gap-2 px-4 py-2.5 bg-rose-500/10 rounded-2xl border border-rose-500/20 text-xs text-rose-450">
+                       <div className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse" />
+                       <span className="font-sans font-semibold">✗ โหลดไม่สำเร็จ</span>
+                       <button 
+                         onClick={() => fetchExternalData(true)}
+                         className="ml-2 px-2.5 py-1 bg-rose-500 hover:bg-rose-600 active:scale-95 text-white text-[10px] rounded-lg transition-all font-sans font-bold"
+                       >
+                         ลองใหม่
+                       </button>
+                     </div>
+                   ) : (
+                     <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 text-xs text-emerald-450">
+                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                       <span className="font-sans font-semibold">✓ ข้อมูลล่าสุด: {lastSync ? lastSync.toLocaleTimeString("th-TH") : "— น."}</span>
+                     </div>
+                   )}
                  </div>
               </div>
 
