@@ -24,7 +24,7 @@ import {
   ArrowDownRight
 } from 'lucide-react';
 import { ProjectInfo, BOQItem, CategoryInfo } from '../types';
-import { db } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, onSnapshot, query } from 'firebase/firestore';
 import { format, parseISO, isValid, differenceInDays, addWeeks, startOfWeek, addDays, startOfDay } from 'date-fns';
 import { th } from 'date-fns/locale';
@@ -93,6 +93,7 @@ export default function SCurveView({ project: propProject, onBack }: SCurveViewP
       console.error("SCurveView Tasks fetch error:", error);
       clearTimeout(safetyTimer);
       setLoading(false);
+      handleFirestoreError(error, OperationType.LIST, `projects/${project.id}/tasks`);
     });
 
     const unsubscribeCats = onSnapshot(catsQuery, (snapshot) => {
@@ -104,6 +105,7 @@ export default function SCurveView({ project: propProject, onBack }: SCurveViewP
       console.error("SCurveView Categories fetch error:", error);
       clearTimeout(safetyTimer);
       setLoading(false);
+      handleFirestoreError(error, OperationType.LIST, `projects/${project.id}/categories`);
     });
 
     return () => {

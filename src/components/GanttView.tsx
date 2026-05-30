@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { addDays, addWeeks, format, startOfWeek, parseISO, isValid, differenceInDays, startOfDay, startOfMonth, endOfMonth, addMonths, isWithinInterval, parse, isBefore, isSameDay } from 'date-fns';
 import { th } from 'date-fns/locale';
 import { BOQItem, ProjectInfo, CategoryInfo } from '../types.ts';
-import { db } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 
 import { collection, onSnapshot, query, setDoc, doc, deleteDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
@@ -813,6 +813,7 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       console.error("GanttView Tasks fetch error:", error);
       clearTimeout(safetyTimer);
       setLoading(false);
+      handleFirestoreError(error, OperationType.LIST, `projects/${project.id}/tasks`);
     });
 
     const unsubscribeCats = onSnapshot(catsQuery, (snapshot) => {
@@ -840,6 +841,7 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
               });
             } catch (e) {
               console.error("Auto-init category error:", e);
+              handleFirestoreError(e, OperationType.CREATE, `projects/${project.id}/categories/${newCatId}`);
             }
           }
         });
@@ -852,6 +854,7 @@ export default function GanttView({ project: propProject, userRole, onBack }: Ga
       console.error("GanttView Categories fetch error:", error);
       clearTimeout(safetyTimer);
       setLoading(false);
+      handleFirestoreError(error, OperationType.LIST, `projects/${project.id}/categories`);
     });
 
     return () => {

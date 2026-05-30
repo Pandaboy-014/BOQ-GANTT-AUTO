@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Mail, Lock, User, Construction, ArrowLeft, AlertCircle } from 'lucide-react';
-import { auth, db } from '../lib/firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import Logo from './Logo.tsx';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
@@ -41,13 +41,17 @@ export default function SignupView({ onNavigateLogin }: SignupViewProps) {
       const user = userCredential.user;
 
       // Create user profile in Firestore
-      await setDoc(doc(db, 'users', user.uid), {
-        name: formData.name,
-        email: formData.email,
-        role: formData.role,
-        avatarUrl: '',
-        createdAt: new Date().toISOString()
-      });
+      try {
+        await setDoc(doc(db, 'users', user.uid), {
+          name: formData.name,
+          email: formData.email,
+          role: formData.role,
+          avatarUrl: '',
+          createdAt: new Date().toISOString()
+        });
+      } catch (dbErr: any) {
+        handleFirestoreError(dbErr, OperationType.CREATE, `users/${user.uid}`);
+      }
 
     } catch (err: any) {
       if (err.code === 'auth/operation-not-allowed') {

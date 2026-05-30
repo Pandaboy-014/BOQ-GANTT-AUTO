@@ -44,7 +44,7 @@ import { ProjectInfo } from '../types.ts';
 import GanttView from './GanttView.tsx';
 import ProjectInfoView from './ProjectInfoView.tsx';
 import SCurveView from './SCurveView.tsx';
-import { db, auth } from '../lib/firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, query, where, getDocs, updateDoc, doc, arrayUnion, deleteDoc, getDoc } from 'firebase/firestore';
 import { showToast, showErrorToast } from '../lib/toast';
 
@@ -1750,9 +1750,13 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
     
     try {
       const { arrayUnion } = await import('firebase/firestore');
-      await updateDoc(doc(db, 'projects', project.id), {
-        memberIds: arrayUnion(foundUser.id)
-      });
+      try {
+        await updateDoc(doc(db, 'projects', project.id), {
+          memberIds: arrayUnion(foundUser.id)
+        });
+      } catch (writeErr: any) {
+        handleFirestoreError(writeErr, OperationType.UPDATE, `projects/${project.id}`);
+      }
       const successMessage = `เพิ่ม ${foundUser.name} เข้าสู่โครงการเรียบร้อยแล้ว`;
       setSuccessMsg(successMessage);
       showToast(successMessage, "success");
@@ -1875,9 +1879,13 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                     reader.onloadend = async () => {
                       const base64 = reader.result as string;
                       try {
-                        await updateDoc(doc(db, 'projects', project.id), {
-                          imageUrl: base64
-                        });
+                        try {
+                          await updateDoc(doc(db, 'projects', project.id), {
+                            imageUrl: base64
+                          });
+                        } catch (writeErr: any) {
+                          handleFirestoreError(writeErr, OperationType.UPDATE, `projects/${project.id}`);
+                        }
                         showToast("อัปโหลดไฟล์/รูปภาพแผนที่สำเร็จ", "success");
                       } catch (err) {
                         console.error("Error updating image:", err);
@@ -2701,7 +2709,11 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
                             onClick={async () => {
                               try {
                                 const newMembers = project.memberIds.filter(id => id !== member.id);
-                                await updateDoc(doc(db, 'projects', project.id), { memberIds: newMembers });
+                                try {
+                                  await updateDoc(doc(db, 'projects', project.id), { memberIds: newMembers });
+                                } catch (writeErr: any) {
+                                  handleFirestoreError(writeErr, OperationType.UPDATE, `projects/${project.id}`);
+                                }
                                 const removeMsg = `ถอน ${member.name} ออกจากโครงการแล้ว`;
                                 setSuccessMsg(removeMsg);
                                 showToast(removeMsg, "success");

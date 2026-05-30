@@ -16,7 +16,7 @@ import {
   X,
   Copy
 } from 'lucide-react';
-import { auth, db } from '../lib/firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
   updatePassword, 
   reauthenticateWithCredential, 
@@ -56,7 +56,12 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
       if (!auth.currentUser) return;
       try {
         const docRef = doc(db, 'users', auth.currentUser.uid);
-        const docSnap = await getDoc(docRef);
+        let docSnap;
+        try {
+          docSnap = await getDoc(docRef);
+        } catch (getErr: any) {
+          handleFirestoreError(getErr, OperationType.GET, `users/${auth.currentUser.uid}`);
+        }
         if (docSnap.exists()) {
           const data = docSnap.data();
           setUserData(data);
@@ -80,11 +85,15 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
     setError(null);
     setSuccess(null);
     try {
-      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-        name,
-        phone,
-        avatarUrl
-      });
+      try {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          name,
+          phone,
+          avatarUrl
+        });
+      } catch (writeErr: any) {
+        handleFirestoreError(writeErr, OperationType.UPDATE, `users/${auth.currentUser.uid}`);
+      }
       setSuccess('อัปเดตข้อมูลสำเร็จ');
       showToast('อัปเดตข้อมูลส่วนตัวสำเร็จ', 'success');
       setUserData({ ...userData, name, phone, avatarUrl });
@@ -185,7 +194,11 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
       }
 
       // Delete user document in Firestore first (since rules allow isOwner(userId))
-      await deleteDoc(doc(db, 'users', user.uid));
+      try {
+        await deleteDoc(doc(db, 'users', user.uid));
+      } catch (delErr: any) {
+        handleFirestoreError(delErr, OperationType.DELETE, `users/${user.uid}`);
+      }
 
       // Delete user from Firebase Auth
       await deleteUser(user);

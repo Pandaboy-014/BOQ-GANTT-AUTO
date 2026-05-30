@@ -12,7 +12,7 @@ import DashboardView from './components/DashboardView.tsx';
 import ProjectDetailView from './components/ProjectDetailView.tsx';
 import AddProjectView from './components/AddProjectView.tsx';
 import ProfileView from './components/ProfileView.tsx';
-import { auth, db } from './lib/firebase';
+import { auth, db, handleFirestoreError, OperationType } from './lib/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, setDoc, getDoc, or } from 'firebase/firestore';
 import OrientationOverlay from './components/OrientationOverlay.tsx';
@@ -54,40 +54,30 @@ export default function App() {
       }
     }, 5000);
 
+    let unsubscribeUserDoc: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (!active) return;
+      
+      if (unsubscribeUserDoc) {
+        unsubscribeUserDoc();
+        unsubscribeUserDoc = null;
+      }
+
       setUser(u);
       if (u) {
-        try {
-          // Fetch role from Firestore with a 4s Promise.race timeout
-          const docRef = doc(db, 'users', u.uid);
-          let docSnap;
-          try {
-            docSnap = await Promise.race([
-              getDoc(docRef),
-              new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout getting user profile")), 4000))
-            ]);
-            // If we successfully fetched docSnap (regardless of if it exists or not), 
-            // Firestore connection is healthy and functional.
+        const docRef = doc(db, 'users', u.uid);
+        
+        // Listen to user document in real-time
+        unsubscribeUserDoc = onSnapshot(docRef, async (docSnap) => {
+          if (!active) return;
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setUserRole(data.role || 'engineer');
             setDbError(false);
-          } catch (fetchErr: any) {
-            console.error("Real connection error or timeout fetching profile:", fetchErr);
-            setDbError(true);
-            // Fallback for visual access while database issue is unresolved
-            setUserRole('engineer');
-            setCurrentView('dashboard');
-            setAuthReady(true);
-            clearTimeout(safetyTimeout);
-            return;
-          }
-
-          if (docSnap && docSnap.exists()) {
-            setUserRole(docSnap.data().role || 'engineer');
-            setCurrentView('dashboard');
-            setDbError(false);
+            setCurrentView(prev => (prev === 'login' || prev === 'signup') ? 'dashboard' : prev);
           } else {
-            // Document doesn't exist yet - which is normal for a brand new user.
-            // Setup default profile for ANY authenticated user to integrate them instantly.
+            // User profile document does not exist yet. Create default profile.
             const defaultRole = 'engineer';
             const newUserProfile = {
               name: u.displayName || u.email?.split('@')[0] || 'User',
@@ -96,29 +86,22 @@ export default function App() {
               avatarUrl: u.photoURL || '',
               createdAt: new Date().toISOString()
             };
-
             try {
-              await Promise.race([
-                setDoc(doc(db, 'users', u.uid), newUserProfile),
-                new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timeout setting user profile")), 4000))
-              ]);
-              setUserRole(defaultRole);
-              setCurrentView('dashboard');
+              await setDoc(docRef, newUserProfile);
               setDbError(false);
             } catch (createErr: any) {
-              console.error("Real connection error or timeout creating profile:", createErr);
-              setDbError(true);
-              // Fallback for visual access
-              setUserRole(defaultRole);
-              setCurrentView('dashboard');
+              console.error("Error creating user profile document:", createErr);
+              handleFirestoreError(createErr, OperationType.WRITE, `users/${u.uid}`);
             }
           }
-        } catch (err) {
-          console.error("Unexpected error in profile setup process:", err);
+        }, (error) => {
+          console.error("Real-time profile fetch error:", error);
           setDbError(true);
+          // Fallback visual bypass
           setUserRole('engineer');
-          setCurrentView('dashboard');
-        }
+          setCurrentView(prev => (prev === 'login' || prev === 'signup') ? 'dashboard' : prev);
+          handleFirestoreError(error, OperationType.GET, `users/${u.uid}`);
+        });
       } else {
         setUserRole(null);
         setCurrentView('login');
@@ -131,6 +114,9 @@ export default function App() {
     return () => {
       active = false;
       unsubscribe();
+      if (unsubscribeUserDoc) {
+        unsubscribeUserDoc();
+      }
       clearTimeout(safetyTimeout);
     };
   }, []);
@@ -141,26 +127,46 @@ export default function App() {
       return;
     }
 
-    // Fetch projects where user is owner OR a member
     const projectsRef = collection(db, 'projects');
-    const q = query(
-      projectsRef, 
-      or(
-        where('ownerId', '==', user.uid),
-        where('memberIds', 'array-contains', user.uid)
-      )
-    );
+    
+    // Split into 2 separate queries to bypass compound 'or' index/rule restrictions
+    const qOwner = query(projectsRef, where('ownerId', '==', user.uid));
+    const qMember = query(projectsRef, where('memberIds', 'array-contains', user.uid));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProjectInfo));
-      setProjectsList(projects);
+    let ownerProjects: ProjectInfo[] = [];
+    let memberProjects: ProjectInfo[] = [];
+
+    const handleUpdates = () => {
+      // Merge unique projects by ID to avoid duplicates
+      const mergedMap = new Map<string, ProjectInfo>();
+      ownerProjects.forEach(p => mergedMap.set(p.id, p));
+      memberProjects.forEach(p => mergedMap.set(p.id, p));
+      setProjectsList(Array.from(mergedMap.values()));
       setDbError(false);
+    };
+
+    const unsubscribeOwner = onSnapshot(qOwner, (snapshot) => {
+      ownerProjects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProjectInfo));
+      handleUpdates();
     }, (error) => {
-      console.error("Firestore onSnapshot error:", error);
+      console.error("Firestore owner projects onSnapshot error:", error);
       setDbError(true);
+      handleFirestoreError(error, OperationType.LIST, 'projects-owner');
     });
 
-    return () => unsubscribe();
+    const unsubscribeMember = onSnapshot(qMember, (snapshot) => {
+      memberProjects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProjectInfo));
+      handleUpdates();
+    }, (error) => {
+      console.error("Firestore member projects onSnapshot error:", error);
+      setDbError(true);
+      handleFirestoreError(error, OperationType.LIST, 'projects-member');
+    });
+
+    return () => {
+      unsubscribeOwner();
+      unsubscribeMember();
+    };
   }, [user]);
 
   const handleLogout = async () => {
@@ -222,12 +228,20 @@ export default function App() {
       }
 
       if (isEdit) {
-        await setDoc(doc(db, 'projects', project.id), finalProject, { merge: true });
+        try {
+          await setDoc(doc(db, 'projects', project.id), finalProject, { merge: true });
+        } catch (writeErr: any) {
+          handleFirestoreError(writeErr, OperationType.UPDATE, `projects/${project.id}`);
+        }
         setEditingProject(null);
         showToast("แก้ไขโครงการสำเร็จ", "success");
       } else {
         const newProjectRef = doc(db, 'projects', finalProject.id);
-        await setDoc(newProjectRef, finalProject);
+        try {
+          await setDoc(newProjectRef, finalProject);
+        } catch (writeErr: any) {
+          handleFirestoreError(writeErr, OperationType.CREATE, `projects/${finalProject.id}`);
+        }
         showToast("เพิ่มโครงการสำเร็จ", "success");
       }
       setCurrentView('dashboard');
@@ -247,14 +261,24 @@ export default function App() {
       const { writeBatch, collection, getDocs } = await import('firebase/firestore');
       const batch = writeBatch(db);
       
-      const tasksSnap = await getDocs(collection(db, 'projects', project.id, 'tasks'));
+      let tasksSnap;
+      try {
+        tasksSnap = await getDocs(collection(db, 'projects', project.id, 'tasks'));
+      } catch (fetchErr: any) {
+        handleFirestoreError(fetchErr, OperationType.LIST, `projects/${project.id}/tasks`);
+      }
+      
       tasksSnap.docs.forEach((t) => {
         batch.delete(t.ref);
       });
       
       batch.delete(doc(db, 'projects', project.id));
       
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (commitErr: any) {
+        handleFirestoreError(commitErr, OperationType.DELETE, `projects/${project.id}`);
+      }
       showToast("ลบโครงการเรียบร้อยแล้ว", "success");
     } catch (err: any) {
       console.error("Error deleting project:", err);
