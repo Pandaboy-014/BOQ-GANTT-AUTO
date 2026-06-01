@@ -89,8 +89,16 @@ app.get('/api/proxy', async (req: express.Request, res: express.Response) => {
       return res.json(json);
     } catch (e: any) {
       if (text.includes('<!DOCTYPE html>') || text.includes('<html')) {
+        let pageTitle = "";
+        const titleMatch = text.match(/<title>([^<]*)<\/title>/i);
+        if (titleMatch && titleMatch[1]) {
+          pageTitle = ` - "${titleMatch[1].trim()}"`;
+        } else {
+          const cleanText = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          pageTitle = ` - "${cleanText.substring(0, 80)}..."`;
+        }
         return res.status(422).json({ 
-          error: "ได้รับข้อมูลเป็น HTML แทนที่จะเป็น JSON. โปรดตรวจสอบว่าได้เผยแพร่ Google Apps Script แบบ 'Anyone' และ URL ถูกต้อง",
+          error: `ได้รับข้อมูลเป็น HTML${pageTitle} แทนที่จะเป็น JSON. โปรดตรวจสอบว่าได้เผยแพร่ Google Apps Script แบบ 'Anyone' และ URL ถูกต้อง`,
           details: text.substring(0, 200)
         });
       }

@@ -488,9 +488,18 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
   try {
     response = await fetch(proxyUrl);
     if (!response.ok) {
-      throw new Error(`HTTP Error ${response.status}`);
+      let errorMsg = `HTTP Error ${response.status}`;
+      try {
+        const errJson = await response.json();
+        if (errJson && errJson.error) {
+          errorMsg = errJson.error;
+        }
+      } catch {
+        // Fallback if not JSON
+      }
+      throw new Error(errorMsg);
     }
-  } catch (proxyError) {
+  } catch (proxyError: any) {
     console.warn(`Proxy fetch failed for ${project.name}, trying direct fetch...`, proxyError);
     try {
       response = await fetch(project.apiUrl, {
@@ -513,7 +522,15 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
     let cleaned = rawText.trim();
     const lower = cleaned.toLowerCase();
     if (lower.startsWith('<!doctype') || lower.startsWith('<html') || lower.includes('<head>') || lower.includes('<body>') || lower.includes('goog-login-button') || (lower.startsWith('<') && lower.includes('>'))) {
-      throw new Error("ลิงก์ Google Apps Script ส่งข้อมูลกลับเป็นหน้าเว็บ HTML (แนะนำให้ตั้งสิทธิ์ความปลอดภัยใน Google Apps Script ให้เป็น 'Anyone' หรือ 'ทุกคน')");
+      let pageTitle = "";
+      const titleMatch = rawText.match(/<title>([^<]*)<\/title>/i);
+      if (titleMatch && titleMatch[1]) {
+        pageTitle = ` - "${titleMatch[1].trim()}"`;
+      } else {
+        const cleanText = rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        pageTitle = ` - "${cleanText.substring(0, 80)}..."`;
+      }
+      throw new Error(`ลิงก์ Google Apps Script ส่งข้อมูลกลับเป็นหน้าเว็บ HTML${pageTitle} (แนะนำให้ตั้งสิทธิ์ความปลอดภัยใน Google Apps Script ให้เป็น 'Anyone' หรือ 'ทุกคน')`);
     }
     
     try {

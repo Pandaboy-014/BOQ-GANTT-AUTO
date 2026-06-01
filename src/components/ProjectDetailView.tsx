@@ -565,9 +565,18 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       try {
         res = await fetch(proxyUrl);
         if (!res.ok) {
-          throw new Error(`HTTP Error ${res.status}`);
+          let errorMsg = `HTTP Error ${res.status}`;
+          try {
+            const errJson = await res.json();
+            if (errJson && errJson.error) {
+              errorMsg = errJson.error;
+            }
+          } catch {
+            // Fallback
+          }
+          throw new Error(errorMsg);
         }
-      } catch (proxyErr) {
+      } catch (proxyErr: any) {
         console.warn(`Proxy fetch failed in DetailView, trying direct fetch...`, proxyErr);
         res = await fetch(project.apiUrl, {
           method: 'GET',
@@ -584,7 +593,15 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
         let cleaned = rawText.trim();
         const lower = cleaned.toLowerCase();
         if (lower.startsWith('<!doctype') || lower.startsWith('<html') || lower.includes('<head>') || lower.includes('<body>') || lower.includes('goog-login-button') || (lower.startsWith('<') && lower.includes('>'))) {
-          throw new Error("ลิงก์ Google Apps Script ส่งข้อมูลกลับเป็นหน้าเว็บ HTML (แนะนำให้ตั้งสิทธิ์ความปลอดภัยใน Google Apps Script ให้เป็น 'Anyone' หรือ 'ทุกคน')");
+          let pageTitle = "";
+          const titleMatch = rawText.match(/<title>([^<]*)<\/title>/i);
+          if (titleMatch && titleMatch[1]) {
+            pageTitle = ` - "${titleMatch[1].trim()}"`;
+          } else {
+            const cleanText = rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            pageTitle = ` - "${cleanText.substring(0, 80)}..."`;
+          }
+          throw new Error(`ลิงก์ Google Apps Script ส่งข้อมูลกลับเป็นหน้าเว็บ HTML${pageTitle} (แนะนำให้ตั้งสิทธิ์ความปลอดภัยใน Google Apps Script ให้เป็น 'Anyone' หรือ 'ทุกคน')`);
         }
 
         try {
