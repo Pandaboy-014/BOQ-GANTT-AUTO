@@ -535,7 +535,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       return;
     }
 
-    // Check cache validity (60s expiry)
+    // Check cache validity (15 minutes expiry)
     if (!force) {
       try {
         const cached = localStorage.getItem(`project_api_cache_${project.id}`);
@@ -544,7 +544,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
           if (cachedObj && cachedObj.lastSync) {
             const cacheTime = new Date(cachedObj.lastSync).getTime();
             const now = new Date().getTime();
-            if (now - cacheTime < 60000) {
+            if (now - cacheTime < 15 * 60000) {
               console.log(`Cache is fresh (${(now - cacheTime)/1000}s old) for project ${project.id}. Skipping live sync.`);
               setIsSyncing(false);
               return;
@@ -859,7 +859,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
   useEffect(() => {
     if (project.apiUrl) {
       fetchExternalData();
-      const interval = setInterval(fetchExternalData, 60000);
+      const interval = setInterval(fetchExternalData, 15 * 60000);
       return () => clearInterval(interval);
     }
   }, [fetchExternalData, project.apiUrl]);

@@ -719,7 +719,7 @@ export default function DashboardView({
     projects.forEach(project => {
       // Check memory cache first
       const cachedEntry = memoryCache[project.id];
-      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 60000);
+      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 15 * 60000);
 
       if (isMemCacheValid) {
         cachedDataUpdates[project.id] = cachedEntry.data;
@@ -797,9 +797,31 @@ export default function DashboardView({
     const projectsToFetch = projects.filter(project => {
       if (!project.apiUrl) return false;
       if (force) return true;
+
+      // 1. Check local memoryCache first
       const cachedEntry = memoryCache[project.id];
-      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 60000);
-      return !isMemCacheValid;
+      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 15 * 60000);
+      if (isMemCacheValid) return false;
+
+      // 2. Check localStorage cache
+      try {
+        const cached = localStorage.getItem(`project_api_cache_${project.id}`);
+        if (cached) {
+          const cachedObj = JSON.parse(cached);
+          if (cachedObj && cachedObj.lastSync) {
+            const cacheTime = new Date(cachedObj.lastSync).getTime();
+            const now = Date.now();
+            if (now - cacheTime < 15 * 60000) { // 15 minutes cache
+              console.log(`[Dashboard] Skipping live fetch for ${project.name} - Cache is fresh (${(now - cacheTime)/1000}s old)`);
+              return false;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Failed checking localStorage cache in DashboardView filter:", e);
+      }
+
+      return true;
     });
 
     if (projectsToFetch.length > 0) {
