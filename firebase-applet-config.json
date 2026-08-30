@@ -1,11 +1,11 @@
 {
   "projectId": "gen-lang-client-0273558773",
-  "appId": "1:332420379203:web:96e191ad266c2bbd377b21",
-  "apiKey": "AIzaSyD-mock-api-key-for-auth",
+  "appId": "1:245570996265:web:5dc591254baa74f356f438",
+  "apiKey": "AIzaSyAoU7P2KRiRlAGJVJ2F6uaIHJOrxcVdvxo",
   "authDomain": "gen-lang-client-0273558773.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-11bc7ad0-3b35-4691-ae84-611cb1dd6964",
-  "storageBucket": "gen-lang-client-0273558773.appspot.com",
-  "messagingSenderId": "332420379203",
+  "storageBucket": "gen-lang-client-0273558773.firebasestorage.app",
+  "messagingSenderId": "245570996265",
   "measurementId": "",
   "oAuthClientId": "",
   "recaptchaSiteKey": ""
