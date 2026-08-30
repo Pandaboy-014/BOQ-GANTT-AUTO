@@ -1,12 +1,12 @@
 {
-  "projectId": "bidea-construction",
-  "appId": "1:59189600639:web:5818944eab864a77753a4a",
-  "apiKey": "AIzaSyBD-pSfXBp1_Sjktkk4zTibH9Zo-OU72yk",
-  "authDomain": "bidea-construction.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-bideaconstructio-11bc7ad0-3b35-4691-ae84-611cb1dd6964",
-  "storageBucket": "bidea-construction.firebasestorage.app",
-  "messagingSenderId": "59189600639",
+  "projectId": "gen-lang-client-0273558773",
+  "appId": "1:332420379203:web:96e191ad266c2bbd377b21",
+  "apiKey": "AIzaSyD-mock-api-key-for-auth",
+  "authDomain": "gen-lang-client-0273558773.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-11bc7ad0-3b35-4691-ae84-611cb1dd6964",
+  "storageBucket": "gen-lang-client-0273558773.appspot.com",
+  "messagingSenderId": "332420379203",
   "measurementId": "",
-  "oAuthClientId": "59189600639-2evovjri0f6eqh5vp2uoru5mdvcnkc80.apps.googleusercontent.com",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
