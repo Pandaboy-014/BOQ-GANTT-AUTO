@@ -368,7 +368,9 @@ const calculateCumulativeIncomeFromDaily = (dailyList: any[], budget: number, en
           let num = parseFloat(str.replace(/[,%฿\s]/g, ""));
           if (isNaN(num)) num = 0;
           if (hasPercent) {
-            sumActual += num / 100;
+            sumActual += num;
+          } else if (num > 0 && num <= 1) {
+            sumActual += num * 100;
           } else {
             sumActual += num;
           }
@@ -377,11 +379,7 @@ const calculateCumulativeIncomeFromDaily = (dailyList: any[], budget: number, en
     }
   }
   
-  if (sumActual > 0 && sumActual <= 1) {
-    return sumActual * budget;
-  } else {
-    return (sumActual / 100) * budget;
-  }
+  return (sumActual / 100) * budget;
 };
 
 const getCurrentThaiMonth = () => {
@@ -624,7 +622,7 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
 
   const out: RealtimeProjectData = {
     budget: budgetValue,
-    cumIncome: parseLocalStr(s.cum_income || "0"),
+    cumIncome: (parseLocalStr(s.cum_income || "0") > 0 ? parseLocalStr(s.cum_income || "0") : (progressValue / 100) * budgetValue),
     netBalanceAllMonths: netBalanceAllMonthsValue,
     progress: progressValue,
     plan_progress: planValue,
@@ -936,8 +934,10 @@ export default function DashboardView({
       if (realtime) {
         totalBudget += realtime.budget;
         totalIncome += realtime.income;
-        const projectCumIncome = calculateCumulativeIncomeFromDaily(realtime.daily || [], realtime.budget, project.endDate);
-        totalCumIncome += projectCumIncome || realtime.cumIncome || 0;
+        const projectCumIncome = realtime.cumIncome > 0 
+          ? realtime.cumIncome 
+          : (realtime.progress > 0 ? (realtime.progress / 100) * realtime.budget : calculateCumulativeIncomeFromDaily(realtime.daily || [], realtime.budget, project.endDate));
+        totalCumIncome += projectCumIncome || 0;
         totalNetAllProjects += realtime.netBalanceAllMonths || 0;
         totalActualProgress += realtime.progress;
         totalPlanProgress += realtime.plan_progress ?? realtime.progress;
@@ -961,8 +961,7 @@ export default function DashboardView({
               const s = d.summary || {};
               const pBudget = parseLocalStr(s.budget) || fallbackBudget;
               const dailyList = d.daily || [];
-              const projectCumIncome = calculateCumulativeIncomeFromDaily(dailyList, pBudget, project.endDate);
-              pCumIncome = projectCumIncome || parseLocalStr(s.cum_income || "0");
+              const rawCumInc = parseLocalStr(s.cum_income || "0");
               const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
               netSum = parseLocalStr(s.net_balance_all_months || "0") || sumDeductionsNet(dList, dailyList, pBudget);
               
@@ -976,6 +975,8 @@ export default function DashboardView({
               }
               actualVal = progressVal;
               planVal = pVal;
+
+              pCumIncome = rawCumInc > 0 ? rawCumInc : (actualVal > 0 ? (actualVal / 100) * pBudget : calculateCumulativeIncomeFromDaily(dailyList, pBudget, project.endDate));
             }
           }
         } catch (e) {}
@@ -1713,10 +1714,14 @@ interface ProjectCardProps {
 const ProjectCard: React.FC<ProjectCardProps> = ({ project, loading, realtimeData, onSelectProject, onEditProject, userRole, error }) => {
   const displayBudget = realtimeData ? realtimeData.budget : (parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0"));
   
-  // Calculate cumulative payment up to cutoff using the new daily cumulative helper
-  const displayCumIncome = realtimeData && realtimeData.daily && realtimeData.daily.length > 0
-    ? calculateCumulativeIncomeFromDaily(realtimeData.daily, displayBudget, project.endDate)
-    : (realtimeData ? realtimeData.cumIncome : 0);
+  // Calculate cumulative payment prioritizing official cumIncome and actual progress
+  const displayCumIncome = (realtimeData && realtimeData.cumIncome > 0)
+    ? realtimeData.cumIncome
+    : (realtimeData && realtimeData.progress > 0
+        ? (realtimeData.progress / 100) * displayBudget
+        : (realtimeData && realtimeData.daily && realtimeData.daily.length > 0
+            ? calculateCumulativeIncomeFromDaily(realtimeData.daily, displayBudget, project.endDate)
+            : (realtimeData ? realtimeData.income : 0)));
 
   const today = new Date();
   const currentMonthIdx = today.getMonth() + 1; // 1-12
