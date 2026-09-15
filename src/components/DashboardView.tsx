@@ -890,25 +890,44 @@ export default function DashboardView({
           if (!project) break;
 
           try {
-            const requestController = new AbortController();
-            const abortRequest = () => requestController.abort();
-            controller.signal.addEventListener('abort', abortRequest, { once: true });
-            const timeoutId = setTimeout(() => requestController.abort(), 45000);
-            try {
-              const data = await fetchSingleProjectData(project, requestController.signal);
-              if (isCurrentLoad()) {
-                pendingData[project.id] = data;
+            let lastError: any = null;
+            let didLoad = false;
+
+            // Google Sheets / Apps Script can briefly be busy while formulas are
+            // recalculating or the scheduled cache refresh is running. Retry a
+            // transient connection once before treating it as a real failure.
+            for (let attempt = 0; attempt < 2 && !controller.signal.aborted; attempt++) {
+              const requestController = new AbortController();
+              const abortRequest = () => requestController.abort();
+              controller.signal.addEventListener('abort', abortRequest, { once: true });
+              const timeoutId = setTimeout(() => requestController.abort(), 60000);
+              try {
+                const data = await fetchSingleProjectData(project, requestController.signal);
+                if (isCurrentLoad()) {
+                  pendingData[project.id] = data;
+                }
+                didLoad = true;
+                break;
+              } catch (err: any) {
+                lastError = err;
+                const isTransient = requestController.signal.aborted || err?.name === 'AbortError' || /network|fetch|timeout/i.test(String(err?.message || ''));
+                if (!isTransient || attempt === 1 || controller.signal.aborted) break;
+                await new Promise<void>(resolve => setTimeout(resolve, 1500));
+              } finally {
+                clearTimeout(timeoutId);
+                controller.signal.removeEventListener('abort', abortRequest);
               }
-            } catch (err: any) {
-              if (!controller.signal.aborted && isCurrentLoad()) {
-                const timedOut = requestController.signal.aborted;
-                pendingErrors[project.id] = timedOut
-                  ? 'เชื่อมต่อหมดเวลา (45 วินาที) โปรดลองรีเฟรชใหม่'
-                  : `ดาวน์โหลดไม่สำเร็จ: ${err.message || 'ข้อผิดพลาดระบบ'}`;
+            }
+
+            if (!didLoad && !controller.signal.aborted && isCurrentLoad()) {
+              // If a previous full response is already on screen, keep it and
+              // avoid presenting a transient refresh delay as lost project data.
+              const hasFallbackData = Boolean(cachedDataUpdates[project.id] || memoryCache[project.id]?.data || realtimeDataMap[project.id]);
+              if (!hasFallbackData) {
+                pendingErrors[project.id] = lastError?.name === 'AbortError'
+                  ? 'เชื่อมต่อใช้เวลานานกว่าปกติ โปรดลองรีเฟรชใหม่'
+                  : `ดาวน์โหลดไม่สำเร็จ: ${lastError?.message || 'ข้อผิดพลาดระบบ'}`;
               }
-            } finally {
-              clearTimeout(timeoutId);
-              controller.signal.removeEventListener('abort', abortRequest);
             }
           } catch (err: any) {
             if (isCurrentLoad()) {
@@ -923,7 +942,9 @@ export default function DashboardView({
         }
       };
 
-      const concurrencyLimit = 5;
+      // A smaller request batch avoids temporarily overloading multiple Sheets
+      // scripts when a province contains many projects.
+      const concurrencyLimit = 3;
       const workers = Array.from({ length: Math.min(concurrencyLimit, projectsToFetch.length) }, () => fetchWorker());
       await Promise.all(workers);
       if (flushTimer !== null) {
