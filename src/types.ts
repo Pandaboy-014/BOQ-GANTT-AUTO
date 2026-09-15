@@ -1,4 +1,4 @@
-export type View = 'login' | 'signup' | 'dashboard' | 'add-project' | 'project-detail' | 'profile';
+export type View = 'login' | 'signup' | 'reset-password' | 'dashboard' | 'add-project' | 'project-detail' | 'profile';
 
 export interface CategoryInfo {
   id: string;

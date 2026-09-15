@@ -10,7 +10,10 @@ import {
   signInWithEmailAndPassword, 
   signInWithPopup, 
   GoogleAuthProvider,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence
 } from 'firebase/auth';
 
 const quickAccessAccounts = [
@@ -44,6 +47,7 @@ export default function LoginView({ onNavigateSignup }: LoginViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
 
   const handleForgotPassword = async () => {
     if (!email) {
@@ -53,7 +57,10 @@ export default function LoginView({ onNavigateSignup }: LoginViewProps) {
     setError(null);
     setSuccess(null);
     try {
-      await sendPasswordResetEmail(auth, email);
+      auth.languageCode = 'th';
+      await sendPasswordResetEmail(auth, email, {
+        url: `${window.location.origin}/?reset=complete`
+      });
       setSuccess('ส่งลิงก์รีเซ็ตรหัสผ่านไปที่อีเมลของคุณแล้ว');
     } catch (err: any) {
       setError(err.message || 'ไม่สามารถส่งอีเมลรีเซ็ตได้');
@@ -70,6 +77,7 @@ export default function LoginView({ onNavigateSignup }: LoginViewProps) {
     setError(null);
     setLoading(true);
     try {
+      await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
       await signInWithEmailAndPassword(auth, email, password);
     } catch (err: any) {
       setError(err.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
@@ -83,6 +91,7 @@ export default function LoginView({ onNavigateSignup }: LoginViewProps) {
     setLoading(true);
     const provider = new GoogleAuthProvider();
     try {
+      await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
       await signInWithPopup(auth, provider);
     } catch (err: any) {
       setError(err.message || 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้');
@@ -282,7 +291,12 @@ export default function LoginView({ onNavigateSignup }: LoginViewProps) {
             <div className="flex items-center justify-between text-[10px] pt-1">
               <label className="flex items-center gap-3 cursor-pointer group">
                 <div className="relative w-4 h-4">
-                  <input type="checkbox" className="sr-only peer" />
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(event) => setRememberMe(event.target.checked)}
+                    className="sr-only peer"
+                  />
                   <div className="w-4 h-4 bg-white/5 border border-white/10 rounded transition-all peer-checked:bg-indigo-600 peer-checked:border-indigo-500" />
                   <div className="absolute inset-0 flex items-center justify-center scale-0 peer-checked:scale-100 transition-transform">
                     <div className="w-1 h-2 border-r border-b border-white rotate-45 mb-0.5" />

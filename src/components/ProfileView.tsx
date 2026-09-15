@@ -20,7 +20,9 @@ import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
   updatePassword, 
   reauthenticateWithCredential, 
+  reauthenticateWithPopup,
   EmailAuthProvider,
+  GoogleAuthProvider,
   signOut,
   deleteUser
 } from 'firebase/auth';
@@ -50,6 +52,7 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const isPasswordUser = auth.currentUser?.providerData.some(p => p.providerId === 'password');
+  const isGoogleUser = auth.currentUser?.providerData.some(p => p.providerId === 'google.com');
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -147,6 +150,8 @@ export default function ProfileView({ onBack }: ProfileViewProps) {
       if (isPasswordUser) {
         const credential = EmailAuthProvider.credential(auth.currentUser.email, passwords.old);
         await reauthenticateWithCredential(auth.currentUser, credential);
+      } else if (isGoogleUser) {
+        await reauthenticateWithPopup(auth.currentUser, new GoogleAuthProvider());
       }
       
       await updatePassword(auth.currentUser, passwords.new);

@@ -33,6 +33,7 @@ interface RealtimeProjectData {
   plan_progress: number;
   income: number;
   monthlyDeductions: Array<{ month: string; steel: number; material: number; netBalance: number }>;
+  monthlyProgress: Array<{ month: string; planAmount: number; actualAmount: number }>;
   daily: any[];
 }
 
@@ -43,6 +44,26 @@ interface CacheEntry {
 
 // In-memory API Cache
 const memoryCache: Record<string, CacheEntry> = {};
+const CACHE_TTL_MS = 15 * 60 * 1000;
+
+interface StoredProjectApiCache {
+  responseData: unknown;
+  cachedAt?: number;
+}
+
+const getProjectCacheKey = (projectId: string) => `project_api_cache_${projectId}`;
+const getProjectCacheTimestampKey = (projectId: string) => `project_api_cache_ts_${projectId}`;
+
+const withApiMode = (apiUrl: string, mode: string) => {
+  try {
+    const url = new URL(apiUrl);
+    url.searchParams.set('mode', mode);
+    return url.toString();
+  } catch {
+    const separator = apiUrl.includes('?') ? '&' : '?';
+    return `${apiUrl}${separator}mode=${encodeURIComponent(mode)}`;
+  }
+};
 
 const parseLocalStr = (val: any): number => {
   if (val === undefined || val === null || val === "") return 0;
@@ -477,14 +498,84 @@ const parseMonthlyDeductions = (dList: any[], dailyList: any[], budgetVal: numbe
   });
 };
 
-const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimeProjectData> => {
+const toRealtimeProjectData = (json: any, project: ProjectInfo): RealtimeProjectData => {
+  const s = json?.data?.summary || {};
+  const fallbackBudget = parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || '0');
+  const budgetValue = parseLocalStr(s.budget) || fallbackBudget;
+  let progressValue = parseLocalStr(s.actual_cum);
+  if (progressValue > 0 && progressValue <= 1 && !String(s.actual_cum || '').includes('%')) {
+    progressValue *= 100;
+  }
+  let planValue = parseLocalStr(s.plan_cum);
+  if (planValue > 0 && planValue <= 1 && !String(s.plan_cum || '').includes('%')) {
+    planValue *= 100;
+  }
+
+  const data = json?.data || {};
+  const deductions = data.weeklyDeductions || data.monthlyDeductions || data.monthly_deductions || data.deductions_monthly || data.deductions || data.deduct_monthly || data.deductionsTable || [];
+  const daily = data.daily || [];
+  const monthlyProgress = Array.isArray(data.monthlyProgress)
+    ? data.monthlyProgress.map((item: any) => ({
+        month: normalizeMonth(item?.month),
+        planAmount: parseLocalStr(item?.planAmount),
+        actualAmount: parseLocalStr(item?.actualAmount)
+      })).filter((item: { month: string }) => item.month)
+    : [];
+  const netBalanceAllMonths = s.net_balance_all_months !== undefined && s.net_balance_all_months !== null && s.net_balance_all_months !== ''
+    ? parseLocalStr(s.net_balance_all_months.toString())
+    : sumDeductionsNet(deductions, daily, budgetValue);
+
+  return {
+    budget: budgetValue,
+    cumIncome: parseLocalStr(s.cum_income || '0') || (progressValue / 100) * budgetValue,
+    netBalanceAllMonths,
+    progress: progressValue,
+    plan_progress: planValue,
+    income: (progressValue / 100) * budgetValue,
+    monthlyDeductions: parseMonthlyDeductions(deductions, daily, budgetValue),
+    monthlyProgress,
+    daily
+  };
+};
+
+const readStoredProjectData = (project: ProjectInfo): { data: RealtimeProjectData; timestamp: number; isFresh: boolean } | null => {
+  try {
+    const cached = localStorage.getItem(getProjectCacheKey(project.id));
+    if (!cached) return null;
+
+    const stored = JSON.parse(cached) as StoredProjectApiCache;
+    if (!stored?.responseData || !(stored.responseData as any)?.data?.summary) return null;
+
+    const legacyTimestamp = Number(localStorage.getItem(getProjectCacheTimestampKey(project.id)) || 0);
+    const timestamp = Number(stored.cachedAt || legacyTimestamp || 0);
+    return {
+      data: toRealtimeProjectData(stored.responseData, project),
+      timestamp,
+      isFresh: timestamp > 0 && Date.now() - timestamp < CACHE_TTL_MS
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveStoredProjectData = (projectId: string, responseData: unknown) => {
+  const cachedAt = Date.now();
+  localStorage.setItem(getProjectCacheKey(projectId), JSON.stringify({ responseData, cachedAt } satisfies StoredProjectApiCache));
+  // Keep the prior key for users who update from an older release.
+  localStorage.setItem(getProjectCacheTimestampKey(projectId), cachedAt.toString());
+};
+
+const fetchSingleProjectData = async (project: ProjectInfo, signal?: AbortSignal): Promise<RealtimeProjectData> => {
   if (!project.apiUrl) {
     throw new Error("No API URL");
   }
-  const proxyUrl = `/api/proxy?url=${encodeURIComponent(project.apiUrl)}`;
+  // Dashboard only needs aggregate values. Apps Script endpoints that have not
+  // been upgraded simply ignore this parameter and retain the old response.
+  const dashboardApiUrl = withApiMode(project.apiUrl, 'summary');
+  const proxyUrl = `/api/proxy?url=${encodeURIComponent(dashboardApiUrl)}`;
   let response: Response;
   try {
-    response = await fetch(proxyUrl);
+    response = await fetch(proxyUrl, { signal });
     if (!response.ok) {
       let errorMsg = `HTTP Error ${response.status}`;
       try {
@@ -498,11 +589,15 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
       throw new Error(errorMsg);
     }
   } catch (proxyError: any) {
+    if (signal?.aborted || proxyError?.name === 'AbortError') {
+      throw proxyError;
+    }
     console.warn(`Proxy fetch failed for ${project.name}, trying direct fetch...`, proxyError);
     try {
-      response = await fetch(project.apiUrl, {
+      response = await fetch(dashboardApiUrl, {
         method: 'GET',
-        redirect: 'follow'
+        redirect: 'follow',
+        signal
       });
       if (!response.ok) {
         throw new Error(`Direct HTTP Error ${response.status}`);
@@ -596,40 +691,7 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
     throw new Error(json.message || "API response error: Google Sheets runtime failed or layout incomplete");
   }
 
-  const s = json.data.summary;
-  const budgetValue = parseLocalStr(s.budget);
-  let progressValue = parseLocalStr(s.actual_cum);
-  if (progressValue > 0 && progressValue <= 1 && !String(s.actual_cum || '').includes('%')) {
-    progressValue = progressValue * 100;
-  }
-  let planValue = parseLocalStr(s.plan_cum);
-  if (planValue > 0 && planValue <= 1 && !String(s.plan_cum || '').includes('%')) {
-    planValue = planValue * 100;
-  }
-
-  const d = json.data;
-  const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
-  
-  const dailyList = d.daily || [];
-  const monthlyDeductions = parseMonthlyDeductions(dList, dailyList, budgetValue);
-
-  let netBalanceAllMonthsValue = 0;
-  if (s.net_balance_all_months !== undefined && s.net_balance_all_months !== null && s.net_balance_all_months !== "") {
-    netBalanceAllMonthsValue = parseLocalStr(s.net_balance_all_months.toString());
-  } else {
-    netBalanceAllMonthsValue = sumDeductionsNet(dList, dailyList, budgetValue);
-  }
-
-  const out: RealtimeProjectData = {
-    budget: budgetValue,
-    cumIncome: (parseLocalStr(s.cum_income || "0") > 0 ? parseLocalStr(s.cum_income || "0") : (progressValue / 100) * budgetValue),
-    netBalanceAllMonths: netBalanceAllMonthsValue,
-    progress: progressValue,
-    plan_progress: planValue,
-    income: (progressValue / 100) * budgetValue,
-    monthlyDeductions,
-    daily: dailyList
-  };
+  const out = toRealtimeProjectData(json, project);
 
   // Cache to memory
   memoryCache[project.id] = {
@@ -639,8 +701,7 @@ const fetchSingleProjectData = async (project: ProjectInfo): Promise<RealtimePro
 
   // Cache to localStorage
   try {
-    localStorage.setItem(`project_api_cache_${project.id}`, JSON.stringify({ responseData: json }));
-    localStorage.setItem(`project_api_cache_ts_${project.id}`, Date.now().toString());
+    saveStoredProjectData(project.id, json);
   } catch (e) {}
 
   return out;
@@ -677,6 +738,7 @@ export default function DashboardView({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'projects' | 'calendar'>('projects');
+  const activeLoadControllerRef = React.useRef<AbortController | null>(null);
 
   const availableProvinces = React.useMemo(() => {
     const provinceSet = new Set<string>();
@@ -705,19 +767,30 @@ export default function DashboardView({
     });
   }, [projects, selectedProvince]);
 
-  // Centralized parallel fetching logic with progressive updates
+  // Only load the current province. The dashboard already requires a province
+  // selection, so fetching every project before a selection wastes requests.
   const loadAllProjects = React.useCallback(async (force = false) => {
-    // Clear previous errors first
+    activeLoadControllerRef.current?.abort();
+    const controller = new AbortController();
+    activeLoadControllerRef.current = controller;
+    const isCurrentLoad = () => activeLoadControllerRef.current === controller && !controller.signal.aborted;
+
     setFetchErrorMap({});
 
-    // 1. Instantly read and display whatever we have in memory cache or localStorage
+    if (selectedProvinceProjects.length === 0) {
+      setLoadingMap({});
+      return;
+    }
+
+    // First render cached information immediately, then only refresh entries whose
+    // cache is stale. This keeps the aggregate screen responsive without changing
+    // the source data or any Firebase document.
     const cachedDataUpdates: Record<string, RealtimeProjectData> = {};
     const initialLoading: Record<string, boolean> = {};
 
-    projects.forEach(project => {
-      // Check memory cache first
+    selectedProvinceProjects.forEach(project => {
       const cachedEntry = memoryCache[project.id];
-      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 15 * 60000);
+      const isMemCacheValid = cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_TTL_MS;
 
       if (isMemCacheValid) {
         cachedDataUpdates[project.id] = cachedEntry.data;
@@ -725,48 +798,19 @@ export default function DashboardView({
         return;
       }
 
-      // If no valid memory cache, try localStorage instantly
-      try {
-        const cached = localStorage.getItem(`project_api_cache_${project.id}`);
-        if (cached) {
-          const cachedObj = JSON.parse(cached);
-          const cachedRes = cachedObj.responseData;
-          if (cachedRes && cachedRes.data) {
-            const d = cachedRes.data;
-            const s = d.summary || {};
-            const budgetVal = parseLocalStr(s.budget) || parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
-            let progressVal = parseLocalStr(s.actual_cum);
-            if (progressVal > 0 && progressVal <= 1 && !String(s.actual_cum || '').includes('%')) {
-              progressVal = progressVal * 100;
-            }
-            let planVal = parseLocalStr(s.plan_cum);
-            if (planVal > 0 && planVal <= 1 && !String(s.plan_cum || '').includes('%')) {
-              planVal = planVal * 100;
-            }
-            const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
-            const cachedDailyList = d.daily || [];
-            const parsedMD = parseMonthlyDeductions(dList, cachedDailyList, budgetVal);
-            const cachedNetSum = parseLocalStr(s.net_balance_all_months || "0") || sumDeductionsNet(dList, cachedDailyList, budgetVal);
-
-            cachedDataUpdates[project.id] = {
-              budget: budgetVal,
-              cumIncome: parseLocalStr(s.cum_income || "0"),
-              netBalanceAllMonths: cachedNetSum,
-              progress: progressVal,
-              plan_progress: planVal,
-              income: (progressVal / 100) * budgetVal,
-              monthlyDeductions: parsedMD,
-              daily: cachedDailyList
-            };
-          }
+      const storedCache = readStoredProjectData(project);
+      if (storedCache) {
+        cachedDataUpdates[project.id] = storedCache.data;
+        if (storedCache.isFresh) {
+          memoryCache[project.id] = { data: storedCache.data, timestamp: storedCache.timestamp };
+          initialLoading[project.id] = false;
+          return;
         }
-      } catch (e) {}
+      }
 
       if (project.apiUrl) {
-        // If it has API, trigger fetching in background
         initialLoading[project.id] = true;
       } else {
-        // Local project with no API
         const budgetVal = parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
         const progressVal = project.progress || 0;
         if (!cachedDataUpdates[project.id]) {
@@ -778,6 +822,7 @@ export default function DashboardView({
             plan_progress: progressVal,
             income: (progressVal / 100) * budgetVal,
             monthlyDeductions: [],
+            monthlyProgress: [],
             daily: []
           };
         }
@@ -785,132 +830,113 @@ export default function DashboardView({
       }
     });
 
-    // Populate states instantly so cards are shown right away if we have cache
-    if (Object.keys(cachedDataUpdates).length > 0) {
+    if (isCurrentLoad() && Object.keys(cachedDataUpdates).length > 0) {
       setRealtimeDataMap(prev => ({ ...prev, ...cachedDataUpdates }));
     }
-    setLoadingMap(prev => ({ ...prev, ...initialLoading }));
+    if (isCurrentLoad()) {
+      setLoadingMap(prev => ({ ...prev, ...initialLoading }));
+    }
 
-    // 2. Identify projects that actually need to fetch from remote
-    const projectsToFetch = projects.filter(project => {
+    const projectsToFetch = selectedProvinceProjects.filter(project => {
       if (!project.apiUrl) return false;
       if (force) return true;
 
-      // 1. Check local memoryCache first
       const cachedEntry = memoryCache[project.id];
-      const isMemCacheValid = cachedEntry && (Date.now() - cachedEntry.timestamp < 15 * 60000);
+      const isMemCacheValid = cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_TTL_MS;
       if (isMemCacheValid) return false;
 
-      // 2. Check localStorage cache
-      try {
-        const cached = localStorage.getItem(`project_api_cache_${project.id}`);
-        if (cached) {
-          const cachedObj = JSON.parse(cached);
-          if (cachedObj && cachedObj.lastSync) {
-            const cacheTime = new Date(cachedObj.lastSync).getTime();
-            const now = Date.now();
-            if (now - cacheTime < 15 * 60000) { // 15 minutes cache
-              console.log(`[Dashboard] Skipping live fetch for ${project.name} - Cache is fresh (${(now - cacheTime)/1000}s old)`);
-              return false;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("Failed checking localStorage cache in DashboardView filter:", e);
-      }
-
-      return true;
+      return !readStoredProjectData(project)?.isFresh;
     });
 
     if (projectsToFetch.length > 0) {
       let index = 0;
+      const pendingData: Record<string, RealtimeProjectData> = {};
+      const pendingErrors: Record<string, string> = {};
+      const pendingLoading: Record<string, boolean> = {};
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-      // Define a concurrent queue worker
+      const flushUpdates = () => {
+        flushTimer = null;
+        if (!isCurrentLoad()) return;
+
+        const dataUpdates = { ...pendingData };
+        const errorUpdates = { ...pendingErrors };
+        const loadingUpdates = { ...pendingLoading };
+        Object.keys(pendingData).forEach(key => delete pendingData[key]);
+        Object.keys(pendingErrors).forEach(key => delete pendingErrors[key]);
+        Object.keys(pendingLoading).forEach(key => delete pendingLoading[key]);
+
+        if (Object.keys(dataUpdates).length > 0) {
+          setRealtimeDataMap(prev => ({ ...prev, ...dataUpdates }));
+        }
+        if (Object.keys(errorUpdates).length > 0) {
+          setFetchErrorMap(prev => ({ ...prev, ...errorUpdates }));
+        }
+        if (Object.keys(loadingUpdates).length > 0) {
+          setLoadingMap(prev => ({ ...prev, ...loadingUpdates }));
+        }
+      };
+
+      const scheduleFlush = () => {
+        if (flushTimer === null) {
+          flushTimer = setTimeout(flushUpdates, 120);
+        }
+      };
+
       const fetchWorker = async () => {
-        while (index < projectsToFetch.length) {
+        while (!controller.signal.aborted && index < projectsToFetch.length) {
           const currentIdx = index++;
           const project = projectsToFetch[currentIdx];
           if (!project) break;
 
           try {
-            // Promise race for 45s timeout
-            const fetchPromise = fetchSingleProjectData(project);
-            const timeoutPromise = new Promise<never>((_, reject) => {
-              setTimeout(() => reject(new Error("Timeout")), 45000);
-            });
-
-            const data = await Promise.race([fetchPromise, timeoutPromise]);
-            setRealtimeDataMap(prev => ({ ...prev, [project.id]: data }));
-          } catch (err: any) {
-            console.error(`Error loading project ${project.name}:`, err);
-            
-            // Map the specific error to show on the card
-            setFetchErrorMap(prev => ({ 
-              ...prev, 
-              [project.id]: err.message === "Timeout" 
-                ? "เชื่อมต่อหมดเวลา (45 วินาที) โปรดลองรีเฟรชใหม่" 
-                : `ดาวน์โหลดไม่สำเร็จ: ${err.message || 'ข้อผิดพลาดระบบ'}` 
-            }));
-
-            // Fallback to local storage cache if fetch failed
+            const requestController = new AbortController();
+            const abortRequest = () => requestController.abort();
+            controller.signal.addEventListener('abort', abortRequest, { once: true });
+            const timeoutId = setTimeout(() => requestController.abort(), 45000);
             try {
-              const cached = localStorage.getItem(`project_api_cache_${project.id}`);
-              if (cached) {
-                const cachedObj = JSON.parse(cached);
-                const cachedRes = cachedObj.responseData;
-                if (cachedRes && cachedRes.data) {
-                  const d = cachedRes.data;
-                  const s = d.summary || {};
-                  const budgetVal = parseLocalStr(s.budget) || parseFloat(project.budget?.toString().replace(/[^0-9.]/g, '') || "0");
-                  let progressVal = parseLocalStr(s.actual_cum);
-                  if (progressVal > 0 && progressVal <= 1 && !String(s.actual_cum || '').includes('%')) {
-                    progressVal = progressVal * 100;
-                  }
-                  let planVal = parseLocalStr(s.plan_cum);
-                  if (planVal > 0 && planVal <= 1 && !String(s.plan_cum || '').includes('%')) {
-                    planVal = planVal * 100;
-                  }
-                  const dList = d.weeklyDeductions || d.monthlyDeductions || d.monthly_deductions || d.deductions_monthly || d.deductions || d.deduct_monthly || d.deductionsTable || [];
-                  const cachedDailyList = d.daily || [];
-                  const parsedMD = parseMonthlyDeductions(dList, cachedDailyList, budgetVal);
-                  const cachedNetSum = parseLocalStr(s.net_balance_all_months || "0") || sumDeductionsNet(dList, cachedDailyList, budgetVal);
-
-                  setRealtimeDataMap(prev => {
-                    // Only write if we don't have active data in prev map
-                    if (prev[project.id]) return prev;
-                    return {
-                      ...prev,
-                      [project.id]: {
-                        budget: budgetVal,
-                        cumIncome: parseLocalStr(s.cum_income || "0"),
-                        netBalanceAllMonths: cachedNetSum,
-                        progress: progressVal,
-                        plan_progress: planVal,
-                        income: (progressVal / 100) * budgetVal,
-                        monthlyDeductions: parsedMD,
-                        daily: cachedDailyList
-                      }
-                    };
-                  });
-                }
+              const data = await fetchSingleProjectData(project, requestController.signal);
+              if (isCurrentLoad()) {
+                pendingData[project.id] = data;
               }
-            } catch (innerErr) {}
+            } catch (err: any) {
+              if (!controller.signal.aborted && isCurrentLoad()) {
+                const timedOut = requestController.signal.aborted;
+                pendingErrors[project.id] = timedOut
+                  ? 'เชื่อมต่อหมดเวลา (45 วินาที) โปรดลองรีเฟรชใหม่'
+                  : `ดาวน์โหลดไม่สำเร็จ: ${err.message || 'ข้อผิดพลาดระบบ'}`;
+              }
+            } finally {
+              clearTimeout(timeoutId);
+              controller.signal.removeEventListener('abort', abortRequest);
+            }
+          } catch (err: any) {
+            if (isCurrentLoad()) {
+              pendingErrors[project.id] = `ดาวน์โหลดไม่สำเร็จ: ${err.message || 'ข้อผิดพลาดระบบ'}`;
+            }
           } finally {
-            setLoadingMap(prev => ({ ...prev, [project.id]: false }));
+            if (isCurrentLoad()) {
+              pendingLoading[project.id] = false;
+              scheduleFlush();
+            }
           }
         }
       };
 
-      // Limit concurrent requests to 5 to avoid browser request queuing issues
       const concurrencyLimit = 5;
       const workers = Array.from({ length: Math.min(concurrencyLimit, projectsToFetch.length) }, () => fetchWorker());
       await Promise.all(workers);
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+      }
+      flushUpdates();
     }
-  }, [projects]);
+  }, [selectedProvinceProjects]);
 
   React.useEffect(() => {
     loadAllProjects(false);
-  }, [projects, loadAllProjects]);
+    return () => activeLoadControllerRef.current?.abort();
+  }, [loadAllProjects]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -1089,7 +1115,8 @@ export default function DashboardView({
       const rt = realtimeDataMap[p.id];
       if (rt) {
         const budgetVal = rt.budget || parseFloat(p.budget?.toString().replace(/[^0-9.]/g, '') || "0");
-        const { planAmount, actualAmount } = getMonthlyPlanAndActualFromDaily(rt.daily || [], monthIndex, thaiYear, budgetVal);
+        const summarizedMonth = rt.monthlyProgress.find(item => normalizeMonth(item.month) === normalizeMonth(activeMonth));
+        const { planAmount, actualAmount } = summarizedMonth || getMonthlyPlanAndActualFromDaily(rt.daily || [], monthIndex, thaiYear, budgetVal);
         totalPlanAmt += planAmount;
         totalActualAmt += actualAmount;
       } else {
@@ -1102,7 +1129,12 @@ export default function DashboardView({
               const d = cachedRes.data;
               const s = d.summary || {};
               const budgetVal = parseLocalStr(s.budget) || parseFloat(p.budget?.toString().replace(/[^0-9.]/g, '') || "0");
-              const { planAmount, actualAmount } = getMonthlyPlanAndActualFromDaily(d.daily || [], monthIndex, thaiYear, budgetVal);
+              const summarizedMonth = Array.isArray(d.monthlyProgress)
+                ? d.monthlyProgress.find((item: any) => normalizeMonth(item?.month) === normalizeMonth(activeMonth))
+                : null;
+              const { planAmount, actualAmount } = summarizedMonth
+                ? { planAmount: parseLocalStr(summarizedMonth.planAmount), actualAmount: parseLocalStr(summarizedMonth.actualAmount) }
+                : getMonthlyPlanAndActualFromDaily(d.daily || [], monthIndex, thaiYear, budgetVal);
               totalPlanAmt += planAmount;
               totalActualAmt += actualAmount;
             }

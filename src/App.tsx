@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { View, ProjectInfo } from './types.ts';
 import LoginView from './components/LoginView.tsx';
 import SignupView from './components/SignupView.tsx';
+import ResetPasswordView from './components/ResetPasswordView.tsx';
 import DashboardView from './components/DashboardView.tsx';
 import ProjectDetailView from './components/ProjectDetailView.tsx';
 import AddProjectView from './components/AddProjectView.tsx';
@@ -19,12 +20,16 @@ import OrientationOverlay from './components/OrientationOverlay.tsx';
 import ToastContainer from './components/Toast.tsx';
 import { showToast, showErrorToast } from './lib/toast.ts';
 
+const isPasswordResetRequest = () => {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('mode') === 'resetPassword' && Boolean(params.get('oobCode'));
+};
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'manager' | 'engineer' | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [currentView, setCurrentView] = useState<View>('login');
+  const [currentView, setCurrentView] = useState<View>(() => isPasswordResetRequest() ? 'reset-password' : 'login');
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
   const [editingProject, setEditingProject] = useState<ProjectInfo | null>(null);
   const [projectsList, setProjectsList] = useState<ProjectInfo[]>([]);
@@ -46,10 +51,10 @@ export default function App() {
         setAuthReady(true);
         // Fallback checks
         if (!user) {
-          setCurrentView('login');
+          setCurrentView(isPasswordResetRequest() ? 'reset-password' : 'login');
         } else if (!userRole) {
           setUserRole('engineer');
-          setCurrentView('dashboard');
+          setCurrentView(isPasswordResetRequest() ? 'reset-password' : 'dashboard');
         }
       }
     }, 5000);
@@ -75,7 +80,7 @@ export default function App() {
             const data = docSnap.data();
             setUserRole(data.role || 'engineer');
             setDbError(false);
-            setCurrentView(prev => (prev === 'login' || prev === 'signup') ? 'dashboard' : prev);
+            setCurrentView(prev => isPasswordResetRequest() ? 'reset-password' : ((prev === 'login' || prev === 'signup') ? 'dashboard' : prev));
           } else {
             // User profile document does not exist yet. Create default profile.
             const defaultRole = 'engineer';
@@ -99,12 +104,12 @@ export default function App() {
           setDbError(true);
           // Fallback visual bypass
           setUserRole('engineer');
-          setCurrentView(prev => (prev === 'login' || prev === 'signup') ? 'dashboard' : prev);
+          setCurrentView(prev => isPasswordResetRequest() ? 'reset-password' : ((prev === 'login' || prev === 'signup') ? 'dashboard' : prev));
           handleFirestoreError(error, OperationType.GET, `users/${u.uid}`);
         });
       } else {
         setUserRole(null);
-        setCurrentView('login');
+        setCurrentView(isPasswordResetRequest() ? 'reset-password' : 'login');
         setDbError(false);
       }
       setAuthReady(true);
@@ -306,6 +311,23 @@ export default function App() {
           >
             <LoginView 
               onNavigateSignup={() => setCurrentView('signup')}
+            />
+          </motion.div>
+        )}
+
+        {currentView === 'reset-password' && (
+          <motion.div
+            key="reset-password"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <ResetPasswordView
+              onReturnToLogin={() => {
+                window.history.replaceState({}, '', window.location.pathname);
+                setCurrentView('login');
+              }}
             />
           </motion.div>
         )}

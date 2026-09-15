@@ -105,12 +105,27 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Keep the full detail response separate from the compact Dashboard response.
+  // Both are exact API payloads, but they serve different screens.
+  const getDetailCacheKey = (projectId: string) => `project_detail_api_cache_${projectId}`;
+
   // Cache check helper
   const getCachedData = React.useCallback(() => {
     try {
-      const cached = localStorage.getItem(`project_api_cache_${project.id}`);
+      const cached = localStorage.getItem(getDetailCacheKey(project.id));
       if (cached) {
         return JSON.parse(cached);
+      }
+
+      // Use an older cache only when it contains the complete daily payload.
+      // Dashboard summaries never qualify here, so detail data cannot be
+      // accidentally replaced by a compact response.
+      const legacyCached = localStorage.getItem(`project_api_cache_${project.id}`);
+      if (legacyCached) {
+        const legacy = JSON.parse(legacyCached);
+        if (Array.isArray(legacy?.responseData?.data?.daily)) {
+          return legacy;
+        }
       }
     } catch (e) {
       console.error("Error loading cache", e);
@@ -538,9 +553,8 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
     // Check cache validity (15 minutes expiry)
     if (!force) {
       try {
-        const cached = localStorage.getItem(`project_api_cache_${project.id}`);
-        if (cached) {
-          const cachedObj = JSON.parse(cached);
+        const cachedObj = getCachedData();
+        if (cachedObj) {
           if (cachedObj && cachedObj.lastSync) {
             const cacheTime = new Date(cachedObj.lastSync).getTime();
             const now = new Date().getTime();
@@ -770,7 +784,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       setIsSyncing(false);
 
       try {
-        localStorage.setItem(`project_api_cache_${project.id}`, JSON.stringify({
+        localStorage.setItem(getDetailCacheKey(project.id), JSON.stringify({
           responseData: parsedJson,
           rows: null,
           summaryData: extracted,
@@ -788,7 +802,7 @@ export default function ProjectDetailView({ project: propProject, onBack, userRo
       setFetchError(error.message || "เกิดข้อผิดพลาดในการดึงข้อมูลผ่าน API");
       setIsSyncing(false);
     }
-  }, [project.apiUrl, progress, externalPlanProgress, project.id]);
+  }, [project.apiUrl, progress, externalPlanProgress, project.id, getCachedData]);
 
   // Pre-populate dashMonthOptions from cached apiData on initial mount
   useEffect(() => {
